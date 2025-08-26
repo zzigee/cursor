@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (for 3D plotting)
 import csv
 
+# tnwjd 
+
 # 사용자 지정 데이터 경로 함수
 def get_data_path():
     return os.path.dirname(os.path.abspath(__file__))
