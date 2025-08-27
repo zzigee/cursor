@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Read(/C:\\cursor - 20250821-2/**)",
+      "Read(/C:\\cursor - 20250821-2/**)",
+      "Read(/C:\\cursor - 20250821-2/**)",
+      "Read(/C:\\cursor - 20250821-2/**)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

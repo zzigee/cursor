@@ -7,24 +7,24 @@
   <link name="rt_link0">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link0.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link0.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link0.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link0.stl" />
       </geometry>
     </collision>
   </link>
   <link name="rt_link1">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link1.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link1.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link1.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link1.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -37,12 +37,12 @@
   <link name="rt_link2">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link2.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link2.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link2.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link2.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -55,12 +55,12 @@
   <link name="rt_link3">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link3.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link3.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link3.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link3.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -73,12 +73,12 @@
   <link name="rt_link4">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link4.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link4.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link4.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link4.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -91,12 +91,12 @@
   <link name="rt_link5">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link5.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link5.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link5.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link5.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -109,12 +109,12 @@
   <link name="rt_link6">
     <visual>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\visual\link6.dae" />
+        <mesh filename="./meshes/rb10_1300e/visual/link6.dae" />
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="C:\cursor\meshes\rb10_1300e\collision\link6.stl" />
+        <mesh filename="./meshes/rb10_1300e/collision/link6.stl" />
       </geometry>
     </collision>
     <inertial>
@@ -134,14 +134,14 @@
     <visual>
       <origin xyz="-0.0 0.1163 -0.0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="C:\cursor\meshes\link_rt.stl" scale="0.001 0.001 0.001" />
+        <mesh filename="./meshes/link_rt.stl" scale="0.001 0.001 0.001" />
       </geometry>
       <material name="silver" />
     </visual>
     <collision>
       <origin xyz="-0.0 0.1163 -0.0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="C:\cursor\meshes\link_rt.stl" scale="0.001 0.001 0.001" />
+        <mesh filename="./meshes/link_rt.stl" scale="0.001 0.001 0.001" />
       </geometry>
     </collision>
   </link>

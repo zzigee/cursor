@@ -692,85 +692,82 @@ def main():
         print("- 마우스 스크롤: 줌 인/아웃")
         print("- 마우스 중간버튼 드래그: 카메라 이동")
 
-        # GUI 요소 추가 (로봇 1번)
-        # 로봇 1 시작 위치 입력
-        robot1_start_x = p.addUserDebugParameter("Robot1 Start X", -1.0, 1.0, 0.0)
-        robot1_start_y = p.addUserDebugParameter("Robot1 Start Y", -1.0, 1.0, 0.0)
-        robot1_start_z = p.addUserDebugParameter("Robot1 Start Z", -1.0, 1.0, 0.0)
+        # 고정값 설정 (로봇 1번)
+        # 로봇 1 시작 위치
+        robot1_start_x_val = 0.0
+        robot1_start_y_val = 0.0
+        robot1_start_z_val = 0.0
         
-        # 로봇 1 시작 자세 입력 (롤, 피치, 요)
-        robot1_start_roll = p.addUserDebugParameter("Robot1 Start Roll", -3.14, 3.14, 0.0)
-        robot1_start_pitch = p.addUserDebugParameter("Robot1 Start Pitch", -3.14, 3.14, 0.0)
-        robot1_start_yaw = p.addUserDebugParameter("Robot1 Start Yaw", -3.14, 3.14, 0.0)
+        # 로봇 1 시작 자세 (롤, 피치, 요)
+        robot1_start_roll_val = 0.0
+        robot1_start_pitch_val = 0.0
+        robot1_start_yaw_val = 0.0
         
-        # 로봇 1 종료 위치 입력
-        robot1_end_x = p.addUserDebugParameter("Robot1 End X", -1.0, 1.0, 0.0)
-        robot1_end_y = p.addUserDebugParameter("Robot1 End Y", -1.0, 1.0, 0.2)
-        robot1_end_z = p.addUserDebugParameter("Robot1 End Z", -1.0, 1.0, -0.3)
+        # 로봇 1 종료 위치
+        robot1_end_x_val = 0.0
+        robot1_end_y_val = 0.2
+        robot1_end_z_val = -0.3
         
-        # 로봇 1 종료 자세 입력 (롤, 피치, 요)
-        robot1_end_roll = p.addUserDebugParameter("Robot1 End Roll", -3.14, 3.14, 0.0)
-        robot1_end_pitch = p.addUserDebugParameter("Robot1 End Pitch", -3.14, 3.14, 0.0)
-        robot1_end_yaw = p.addUserDebugParameter("Robot1 End Yaw", -3.14, 3.14, 0.0)
+        # 로봇 1 종료 자세 (롤, 피치, 요)
+        robot1_end_roll_val = 0.0
+        robot1_end_pitch_val = 0.0
+        robot1_end_yaw_val = 0.0
         
-        # GUI 요소 추가 (로봇 2번)
-        # 로봇 2 시작 위치 입력
-        robot2_start_x = p.addUserDebugParameter("Robot2 Start X", -1.0, 1.0, 0.5)
-        robot2_start_y = p.addUserDebugParameter("Robot2 Start Y", -1.0, 1.0, 0.0)
-        robot2_start_z = p.addUserDebugParameter("Robot2 Start Z", -1.0, 1.0, 0.0)
+        # 고정값 설정 (로봇 2번)
+        # 로봇 2 시작 위치
+        robot2_start_x_val = 0.5
+        robot2_start_y_val = 0.0
+        robot2_start_z_val = 0.0
         
-        # 로봇 2 시작 자세 입력 (롤, 피치, 요)
-        robot2_start_roll = p.addUserDebugParameter("Robot2 Start Roll", -3.14, 3.14, 0.0)
-        robot2_start_pitch = p.addUserDebugParameter("Robot2 Start Pitch", -3.14, 3.14, 0.0)
-        robot2_start_yaw = p.addUserDebugParameter("Robot2 Start Yaw", -3.14, 3.14, 0.0)
+        # 로봇 2 시작 자세 (롤, 피치, 요)
+        robot2_start_roll_val = 0.0
+        robot2_start_pitch_val = 0.0
+        robot2_start_yaw_val = 0.0
         
-        # 로봇 2 종료 위치 입력
-        robot2_end_x = p.addUserDebugParameter("Robot2 End X", -1.0, 1.0, 0.5)
-        robot2_end_y = p.addUserDebugParameter("Robot2 End Y", -1.0, 1.0, 0.2)
-        robot2_end_z = p.addUserDebugParameter("Robot2 End Z", -1.0, 1.0, -0.3)
+        # 로봇 2 종료 위치
+        robot2_end_x_val = 0.5
+        robot2_end_y_val = 0.2
+        robot2_end_z_val = -0.3
         
-        # 로봇 2 종료 자세 입력 (롤, 피치, 요)
-        robot2_end_roll = p.addUserDebugParameter("Robot2 End Roll", -3.14, 3.14, 0.0)
-        robot2_end_pitch = p.addUserDebugParameter("Robot2 End Pitch", -3.14, 3.14, 0.0)
-        robot2_end_yaw = p.addUserDebugParameter("Robot2 End Yaw", -3.14, 3.14, 0.0)
+        # 로봇 2 종료 자세 (롤, 피치, 요)
+        robot2_end_roll_val = 0.0
+        robot2_end_pitch_val = 0.0
+        robot2_end_yaw_val = 0.0
         
-        # 파이프 위치 조절
-        pipe_x = p.addUserDebugParameter("Pipe X", -5.0, 5.0, 0.0)
-        pipe_y = p.addUserDebugParameter("Pipe Y", -5.0, 5.0, 1.65)
-        pipe_z = p.addUserDebugParameter("Pipe Z", -5.0, 5.0, 1.10)
+        # 파이프 위치 고정값
+        pipe_x_val = 0.0
+        pipe_y_val = 1.65
+        pipe_z_val = 1.10
         
-        # 파이프 자세 조절 (롤, 피치, 요)
-        pipe_roll = p.addUserDebugParameter("Pipe Roll", -3.14, 3.14, 1.65)  # 기본값 X축 90도 회전
-        pipe_pitch = p.addUserDebugParameter("Pipe Pitch", -3.14, 3.14, 0.13)
-        pipe_yaw = p.addUserDebugParameter("Pipe Yaw", -3.14, 3.14, 0.13)
+        # 파이프 자세 고정값 (롤, 피치, 요)
+        pipe_roll_val = 1.65  # X축 90도 회전
+        pipe_pitch_val = 0.13
+        pipe_yaw_val = 0.13
         
-        # 시뮬레이션 속도 조절
-        speed_slider = p.addUserDebugParameter("Simulation Speed", 0.1, 2.0, 1.0)
+        # 로봇 원점 위치 및 자세 고정값
+        robot1_base_x_val = 0.0
+        robot1_base_y_val = 0.0
+        robot1_base_z_val = 0.0
+        robot1_base_roll_val = 0.0
+        robot1_base_pitch_val = 0.0
+        robot1_base_yaw_val = 3.14  # 180도
         
-        # 로봇 원점 위치 및 자세 설정을 위한 텍스트 입력 박스 추가
-        robot1_base_x_text = p.addUserDebugParameter("Robot1 Base X", -5.0, 5.0, 0.0)
-        robot1_base_y_text = p.addUserDebugParameter("Robot1 Base Y", -5.0, 5.0, 0.0)
-        robot1_base_z_text = p.addUserDebugParameter("Robot1 Base Z", -5.0, 5.0, 0.0)
-        robot1_base_roll_text = p.addUserDebugParameter("Robot1 Base Roll", -3.14, 3.14, 0.0)
-        robot1_base_pitch_text = p.addUserDebugParameter("Robot1 Base Pitch", -3.14, 3.14, 0.0)
-        robot1_base_yaw_text = p.addUserDebugParameter("Robot1 Base Yaw", -3.14, 3.14, 3.14)  # 180도 기본값
-        
-        robot2_base_x_text = p.addUserDebugParameter("Robot2 Base X", -5.0, 5.0, 1.0)
-        robot2_base_y_text = p.addUserDebugParameter("Robot2 Base Y", -5.0, 5.0, 0.0)
-        robot2_base_z_text = p.addUserDebugParameter("Robot2 Base Z", -5.0, 5.0, 0.0)
-        robot2_base_roll_text = p.addUserDebugParameter("Robot2 Base Roll", -3.14, 3.14, 0.0)
-        robot2_base_pitch_text = p.addUserDebugParameter("Robot2 Base Pitch", -3.14, 3.14, 0.0)
-        robot2_base_yaw_text = p.addUserDebugParameter("Robot2 Base Yaw", -3.14, 3.14, 3.14)  # 180도 기본값
+        robot2_base_x_val = 1.0
+        robot2_base_y_val = 0.0
+        robot2_base_z_val = 0.0
+        robot2_base_roll_val = 0.0
+        robot2_base_pitch_val = 0.0
+        robot2_base_yaw_val = 3.14  # 180도
         
         # Apply 버튼 추가
-        apply_robot_base_button = p.addUserDebugParameter("Apply Robot Base", 1, 1, 1)
+        apply_robot_base_button = p.addUserDebugParameter("Apply Robot Base", 0, 1, 0)
         
         # 로봇별 시작 버튼
-        robot1_start_button = p.addUserDebugParameter("Robot1 Start", 1, 0, 0)
-        robot2_start_button = p.addUserDebugParameter("Robot2 Start", 1, 0, 0)
+        robot1_start_button = p.addUserDebugParameter("Robot1 Start", 0, 1, 0)
+        robot2_start_button = p.addUserDebugParameter("Robot2 Start", 0, 1, 0)
         
         # 전체 초기화 버튼
-        reset_button = p.addUserDebugParameter("Reset All", 1, 0, 0)
+        reset_button = p.addUserDebugParameter("Reset All", 0, 1, 0)
         
         # 이전 버튼 상태 저장
         previous_robot1_button_state = p.readUserDebugParameter(robot1_start_button)
@@ -903,7 +900,7 @@ def main():
         print("2. 파이프 위치(Pipe X/Y/Z)를 조절하여 원하는 위치로 이동하세요.")
         print("3. 'Robot1 Start' 또는 'Robot2 Start' 버튼을 클릭하여 각 로봇의 시뮬레이션을 시작하세요.")
         print("4. 'Reset All' 버튼으로 모든 로봇을 초기화할 수 있습니다.")
-        print("5. 시뮬레이션 속도는 'Simulation Speed' 슬라이더로 조절할 수 있습니다.")
+
         print("6. 충돌이 발생하면 해당 부위가 빨간색으로 표시됩니다.")
         print("7. 로봇 간 충돌은 주황색으로 표시됩니다.")
         print("8. 마우스로 카메라를 자유롭게 조작할 수 있습니다.")
@@ -915,49 +912,52 @@ def main():
 
         # 로봇 재로드 함수
         def reload_robots_with_new_base():
-            nonlocal robot1_id, robot2_id, robots
+            nonlocal robot1_id, robot2_id, robots, robot1_path, robot2_path, robot_simulation_states
             
-            # 새로운 로봇 원점 위치 및 자세 읽기
-            new_robot1_pos = [
-                p.readUserDebugParameter(robot1_base_x_text),
-                p.readUserDebugParameter(robot1_base_y_text),
-                p.readUserDebugParameter(robot1_base_z_text)
-            ]
-            new_robot1_rpy = [
-                p.readUserDebugParameter(robot1_base_roll_text),
-                p.readUserDebugParameter(robot1_base_pitch_text),
-                p.readUserDebugParameter(robot1_base_yaw_text)
-            ]
+            # 새로운 로봇 원점 위치 및 자세 (고정값 사용)
+            new_robot1_pos = [robot1_base_x_val, robot1_base_y_val, robot1_base_z_val]
+            new_robot1_rpy = [robot1_base_roll_val, robot1_base_pitch_val, robot1_base_yaw_val]
             new_robot1_orientation = p.getQuaternionFromEuler(new_robot1_rpy)
             
-            new_robot2_pos = [
-                p.readUserDebugParameter(robot2_base_x_text),
-                p.readUserDebugParameter(robot2_base_y_text),
-                p.readUserDebugParameter(robot2_base_z_text)
-            ]
-            new_robot2_rpy = [
-                p.readUserDebugParameter(robot2_base_roll_text),
-                p.readUserDebugParameter(robot2_base_pitch_text),
-                p.readUserDebugParameter(robot2_base_yaw_text)
-            ]
+            new_robot2_pos = [robot2_base_x_val, robot2_base_y_val, robot2_base_z_val]
+            new_robot2_rpy = [robot2_base_roll_val, robot2_base_pitch_val, robot2_base_yaw_val]
             new_robot2_orientation = p.getQuaternionFromEuler(new_robot2_rpy)
             
-            # 기존 로봇 제거
-            try:
-                p.removeBody(robot1_id)
-                p.removeBody(robot2_id)
-                print("기존 로봇들이 제거되었습니다.")
-            except:
-                print("기존 로봇 제거 중 오류 발생 (무시)")
+            # PyBullet 연결 상태 확인
+            if not p.isConnected():
+                print("오류: PyBullet 연결이 끊어졌습니다.")
+                return False
             
-            # 새로운 위치와 자세로 로봇 재로드
+            # 기존 로봇 ID 백업 (복원용)
+            old_robot1_id = robot1_id
+            old_robot2_id = robot2_id
+            
+            # 기존 딕셔너리 엔트리 정리
+            old_robots = robots.copy()
+            robots.clear()
+            
             try:
+                # 기존 로봇 제거
+                if old_robot1_id is not None:
+                    p.removeBody(old_robot1_id)
+                    print(f"로봇 1 (ID: {old_robot1_id}) 제거됨")
+                if old_robot2_id is not None:
+                    p.removeBody(old_robot2_id)
+                    print(f"로봇 2 (ID: {old_robot2_id}) 제거됨")
+                
+                # 새로운 위치와 자세로 로봇 재로드
+                print("새로운 위치로 로봇들을 로드 중...")
+                
                 robot1_id = p.loadURDF(
                     robot1_path,
                     basePosition=new_robot1_pos,
                     baseOrientation=new_robot1_orientation,
                     useFixedBase=True
                 )
+                
+                if robot1_id < 0:
+                    raise Exception("로봇 1 로드 실패")
+                    
                 robot2_id = p.loadURDF(
                     robot2_path,
                     basePosition=new_robot2_pos,
@@ -965,11 +965,14 @@ def main():
                     useFixedBase=True
                 )
                 
+                if robot2_id < 0:
+                    raise Exception("로봇 2 로드 실패")
+                
                 # 좌표축 표시
                 draw_coordinate_axes(robot1_id, scale=0.15)
                 draw_coordinate_axes(robot2_id, scale=0.15)
                 
-                # 로봇 데이터 업데이트
+                # 새로운 로봇 데이터로 딕셔너리 업데이트
                 robots[robot1_id] = {
                     'name': 'Robot1_DDA',
                     'joints': [],
@@ -986,7 +989,12 @@ def main():
                 # 관절 정보 재설정
                 for robot_id in [robot1_id, robot2_id]:
                     robot_joints = []
-                    for i in range(p.getNumJoints(robot_id)):
+                    joint_count = p.getNumJoints(robot_id)
+                    
+                    if joint_count < 0:
+                        raise Exception(f"로봇 {robot_id}의 관절 정보 읽기 실패")
+                    
+                    for i in range(joint_count):
                         joint_info = p.getJointInfo(robot_id, i)
                         if joint_info[2] == p.JOINT_REVOLUTE:
                             robot_joints.append({
@@ -998,12 +1006,38 @@ def main():
                             })
                     robots[robot_id]['joints'] = robot_joints
                 
-                print("로봇들이 새로운 위치와 자세로 재로드되었습니다!")
-                print(f"Robot1 위치: {new_robot1_pos}, RPY: {new_robot1_rpy}")
-                print(f"Robot2 위치: {new_robot2_pos}, RPY: {new_robot2_rpy}")
+                # 시뮬레이션 상태 재초기화
+                robot_simulation_states.clear()
+                robot_simulation_states[robot1_id] = {
+                    'simulation_started': False,
+                    'path_index': 0,
+                    'collision_detected': False
+                }
+                robot_simulation_states[robot2_id] = {
+                    'simulation_started': False,
+                    'path_index': 0,
+                    'collision_detected': False
+                }
+                
+                print("✅ 로봇들이 새로운 위치와 자세로 성공적으로 재로드되었습니다!")
+                print(f"Robot1 (ID: {robot1_id}) 위치: {new_robot1_pos}, RPY: {new_robot1_rpy}")
+                print(f"Robot2 (ID: {robot2_id}) 위치: {new_robot2_pos}, RPY: {new_robot2_rpy}")
+                return True
                 
             except Exception as e:
-                print(f"로봇 재로드 중 오류 발생: {e}")
+                print(f"❌ 로봇 재로드 중 오류 발생: {e}")
+                print("기존 설정으로 복원을 시도합니다...")
+                
+                # 실패 시 기존 딕셔너리 복원
+                robots.clear()
+                robots.update(old_robots)
+                
+                # 기존 로봇 ID 복원
+                robot1_id = old_robot1_id
+                robot2_id = old_robot2_id
+                
+                print("기존 설정으로 복원되었습니다.")
+                return False
 
         # 시뮬레이션 루프
         while p.isConnected():
@@ -1019,22 +1053,36 @@ def main():
                 # Apply Robot Base 버튼이 눌렸는지 확인
                 if current_apply_state != previous_apply_state:
                     print("Apply Robot Base 버튼이 눌렸습니다. 로봇들을 재로드합니다...")
-                    reload_robots_with_new_base()
+                    
+                    # GUI 파라미터 유효성 검증
+                    try:
+                        new_pos1 = [robot1_base_x_val, robot1_base_y_val, robot1_base_z_val]
+                        new_pos2 = [robot2_base_x_val, robot2_base_y_val, robot2_base_z_val]
+                        
+                        # 위치 값 유효성 검사
+                        for pos in [new_pos1, new_pos2]:
+                            for val in pos:
+                                if not isinstance(val, (int, float)) or math.isnan(val) or math.isinf(val):
+                                    raise ValueError("유효하지 않은 위치 값")
+                        
+                        # 로봇 재로드 실행
+                        success = reload_robots_with_new_base()
+                        if success:
+                            print("로봇 베이스 위치가 성공적으로 적용되었습니다.")
+                        else:
+                            print("로봇 베이스 위치 적용에 실패했습니다.")
+                            
+                    except Exception as e:
+                        print(f"Apply Robot Base 처리 중 오류: {e}")
+                        print("GUI 파라미터를 확인하세요.")
+                    
                     previous_apply_state = current_apply_state
                 
-                # 파이프 위치 업데이트
-                pipe_pos = [
-                    p.readUserDebugParameter(pipe_x),
-                    p.readUserDebugParameter(pipe_y),
-                    p.readUserDebugParameter(pipe_z)
-                ]
+                # 파이프 위치 업데이트 (고정값 사용)
+                pipe_pos = [pipe_x_val, pipe_y_val, pipe_z_val]
                 
-                # 파이프 자세 업데이트 (RPY -> 쿼터니언)
-                pipe_rpy = [
-                    p.readUserDebugParameter(pipe_roll),
-                    p.readUserDebugParameter(pipe_pitch),
-                    p.readUserDebugParameter(pipe_yaw)
-                ]
+                # 파이프 자세 업데이트 (고정값 사용)
+                pipe_rpy = [pipe_roll_val, pipe_pitch_val, pipe_yaw_val]
                 pipe_orientation = p.getQuaternionFromEuler(pipe_rpy)
                 
                 p.resetBasePositionAndOrientation(pipe_id, pipe_pos, pipe_orientation)
@@ -1071,34 +1119,18 @@ def main():
                     if not robot_simulation_states[robot1_id]['simulation_started']:
                         print("\n로봇 1 경로 생성 중...")
                         
-                        # 로봇 1 시작 위치 읽기
-                        start_pos = [
-                            p.readUserDebugParameter(robot1_start_x),
-                            p.readUserDebugParameter(robot1_start_y),
-                            p.readUserDebugParameter(robot1_start_z)
-                        ]
+                        # 로봇 1 시작 위치 (고정값 사용)
+                        start_pos = [robot1_start_x_val, robot1_start_y_val, robot1_start_z_val]
                         
-                        # 로봇 1 시작 자세 읽기
-                        start_rpy = [
-                            p.readUserDebugParameter(robot1_start_roll),
-                            p.readUserDebugParameter(robot1_start_pitch),
-                            p.readUserDebugParameter(robot1_start_yaw)
-                        ]
+                        # 로봇 1 시작 자세 (고정값 사용)
+                        start_rpy = [robot1_start_roll_val, robot1_start_pitch_val, robot1_start_yaw_val]
                         start_orientation = p.getQuaternionFromEuler(start_rpy)
                         
-                        # 로봇 1 종료 위치 읽기
-                        end_pos = [
-                            p.readUserDebugParameter(robot1_end_x),
-                            p.readUserDebugParameter(robot1_end_y),
-                            p.readUserDebugParameter(robot1_end_z)
-                        ]
+                        # 로봇 1 종료 위치 (고정값 사용)
+                        end_pos = [robot1_end_x_val, robot1_end_y_val, robot1_end_z_val]
                         
-                        # 로봇 1 종료 자세 읽기
-                        end_rpy = [
-                            p.readUserDebugParameter(robot1_end_roll),
-                            p.readUserDebugParameter(robot1_end_pitch),
-                            p.readUserDebugParameter(robot1_end_yaw)
-                        ]
+                        # 로봇 1 종료 자세 (고정값 사용)
+                        end_rpy = [robot1_end_roll_val, robot1_end_pitch_val, robot1_end_yaw_val]
                         end_orientation = p.getQuaternionFromEuler(end_rpy)
                         
                         print(f"로봇 1 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
@@ -1160,34 +1192,18 @@ def main():
                     if not robot_simulation_states[robot2_id]['simulation_started']:
                         print("\n로봇 2 경로 생성 중...")
                         
-                        # 로봇 2 시작 위치 읽기
-                        start_pos = [
-                            p.readUserDebugParameter(robot2_start_x),
-                            p.readUserDebugParameter(robot2_start_y),
-                            p.readUserDebugParameter(robot2_start_z)
-                        ]
+                        # 로봇 2 시작 위치 (고정값 사용)
+                        start_pos = [robot2_start_x_val, robot2_start_y_val, robot2_start_z_val]
                         
-                        # 로봇 2 시작 자세 읽기
-                        start_rpy = [
-                            p.readUserDebugParameter(robot2_start_roll),
-                            p.readUserDebugParameter(robot2_start_pitch),
-                            p.readUserDebugParameter(robot2_start_yaw)
-                        ]
+                        # 로봇 2 시작 자세 (고정값 사용)
+                        start_rpy = [robot2_start_roll_val, robot2_start_pitch_val, robot2_start_yaw_val]
                         start_orientation = p.getQuaternionFromEuler(start_rpy)
                         
-                        # 로봇 2 종료 위치 읽기
-                        end_pos = [
-                            p.readUserDebugParameter(robot2_end_x),
-                            p.readUserDebugParameter(robot2_end_y),
-                            p.readUserDebugParameter(robot2_end_z)
-                        ]
+                        # 로봇 2 종료 위치 (고정값 사용)
+                        end_pos = [robot2_end_x_val, robot2_end_y_val, robot2_end_z_val]
                         
-                        # 로봇 2 종료 자세 읽기
-                        end_rpy = [
-                            p.readUserDebugParameter(robot2_end_roll),
-                            p.readUserDebugParameter(robot2_end_pitch),
-                            p.readUserDebugParameter(robot2_end_yaw)
-                        ]
+                        # 로봇 2 종료 자세 (고정값 사용)
+                        end_rpy = [robot2_end_roll_val, robot2_end_pitch_val, robot2_end_yaw_val]
                         end_orientation = p.getQuaternionFromEuler(end_rpy)
                         
                         print(f"로봇 2 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
@@ -1251,9 +1267,6 @@ def main():
                         robot_state['path_index'] < len(robot_paths[robot_id]) and 
                         not robot_state['collision_detected']):
                         
-                        # 시뮬레이션 속도 읽기
-                        speed = p.readUserDebugParameter(speed_slider)
-                        
                         # 현재 경로의 관절 위치로 이동
                         current_config = robot_paths[robot_id][robot_state['path_index']]
                         
@@ -1267,7 +1280,7 @@ def main():
                                 force=1000,
                                 positionGain=1.0,
                                 velocityGain=0.5,
-                                maxVelocity=0.5 * speed
+                                maxVelocity=0.5
                             )
                         
                         # 다른 로봇들 ID 리스트 준비

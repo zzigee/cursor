@@ -13,6 +13,16 @@ import hashlib
 import subprocess
 import tempfile
 
+# PLY 처리 전용 모듈 import
+try:
+    import ply_processor
+    from ply_processor import load_pipe_from_ply, load_ply_as_pybullet_body
+    PLY_PROCESSOR_AVAILABLE = True
+    print("ply_processor 모듈 로드 성공")
+except ImportError:
+    PLY_PROCESSOR_AVAILABLE = False
+    print("ply_processor 모듈 없음 - 기본 처리 방식 사용")
+
 # PyBullet은 선택적 import
 try:
     import pybullet as p
@@ -562,7 +572,7 @@ class CollisionProcessorGUI:
             
             try:
                 if method == "Point Cloud Direct":
-                    # 포인트 클라우드를 직접 충돌 감지에 사용
+                    # 포인트 클라우드를 직접 충돌 감지에 사용 (ply_processor 활용)
                     hull_mesh = self.create_point_cloud_collision(points, mesh_start_time, timeout_seconds)
                 elif method == "Convex Hull (Original)":
                     # urdf_visualizer_pybullet.py와 동일한 방식
@@ -597,19 +607,34 @@ class CollisionProcessorGUI:
             hull_mesh.export(obj_path)
             self.log(f"OBJ 저장: {obj_path}")
             
-            # 5. V-HACD 실행
+            # 5. V-HACD 실행 (ply_processor 활용)
             self.progress_var.set(70)
             self.status_var.set("V-HACD 컨벡스 분해 중...")
             
-            # 실행 시간 예측
-            expected_time = self.estimate_vhacd_time(len(hull_mesh.vertices), len(hull_mesh.faces))
-            self.vhacd_estimated_time = expected_time  # 진행 상태 업데이트에서 사용
-            self.log(f"예상 처리 시간: {expected_time:.1f}초")
-            
             start_time = time.time()
-            vhacd_path = self.run_vhacd(obj_path)
-            processing_time = time.time() - start_time
-            self.log(f"실제 처리 시간: {processing_time:.1f}초")
+            
+            # ply_processor를 우선 사용
+            vhacd_path = None
+            if PLY_PROCESSOR_AVAILABLE:
+                try:
+                    self.log("ply_processor로 V-HACD 실행...")
+                    vhacd_path = ply_processor.perform_convex_decomposition(obj_path)
+                    processing_time = time.time() - start_time
+                    self.log(f"ply_processor V-HACD 완료: {processing_time:.1f}초")
+                except Exception as e:
+                    self.log(f"ply_processor V-HACD 실패: {e}")
+                    vhacd_path = None
+            
+            # ply_processor 실패시 기존 방식 사용
+            if vhacd_path is None:
+                self.log("기존 V-HACD 방식 사용...")
+                expected_time = self.estimate_vhacd_time(len(hull_mesh.vertices), len(hull_mesh.faces))
+                self.vhacd_estimated_time = expected_time
+                self.log(f"예상 처리 시간: {expected_time:.1f}초")
+                
+                vhacd_path = self.run_vhacd(obj_path)
+                processing_time = time.time() - start_time
+                self.log(f"기존 V-HACD 완료: {processing_time:.1f}초")
             
             # 6. 결과 검증
             self.progress_var.set(90)
@@ -883,62 +908,166 @@ class CollisionProcessorGUI:
             messagebox.showerror("오류", error_msg)
     
     def _run_pybullet_sphere_test(self):
-        """PyBullet 구체 충돌 테스트"""
+        """PyBullet 구체 충돌 테스트 (ply_processor 활용)"""
         try:
             if not PYBULLET_AVAILABLE:
                 messagebox.showwarning("경고", "PyBullet이 설치되어 있지 않습니다.")
                 return
             
-            self.log("PyBullet 구체 충돌 테스트 시작...")
+            self.log("PyBullet 고급 시각화 테스트 시작...")
             
             physics_client = p.connect(p.GUI)
             p.setGravity(0, 0, -9.81)
             
+            # 바닥 평면 추가
+            p.loadURDF("plane.urdf") if os.path.exists("plane.urdf") else None
+            
             try:
-                metadata = self.point_cloud_metadata
-                collision_points = metadata['collision_points']
-                collision_radius = metadata['collision_radius']
-                
-                # 구체들을 PyBullet에 생성
-                sphere_bodies = []
-                collision_shape = p.createCollisionShape(p.GEOM_SPHERE, radius=collision_radius)
-                visual_shape = p.createVisualShape(p.GEOM_SPHERE, radius=collision_radius, 
-                                                 rgbaColor=[0.7, 0.7, 1.0, 0.8])
-                
-                # 포인트 클라우드의 각 점을 구체로 생성 (최대 500개)
-                max_spheres = min(500, len(collision_points))
-                self.log(f"구체 생성: {max_spheres}개")
-                
-                for i, point in enumerate(collision_points[:max_spheres]):
-                    body_id = p.createMultiBody(
-                        baseMass=0,  # 정적 객체
-                        baseCollisionShapeIndex=collision_shape,
-                        baseVisualShapeIndex=visual_shape,
-                        basePosition=point.tolist()
+                # 1. ply_processor를 사용한 PLY 파일 로드 (작동하는 방식 적용)
+                if PLY_PROCESSOR_AVAILABLE and hasattr(self, 'current_filename'):
+                    self.log("ply_processor로 PLY 파일 로드 중 (작동하는 방식 적용)...")
+                    
+                    # 파일명만 추출 (경로 제거)
+                    import os
+                    ply_filename = os.path.basename(self.current_filename)
+                    
+                    # 작동하는 방식: load_pipe_from_ply 사용
+                    ply_body_id = load_pipe_from_ply(
+                        ply_filename=ply_filename,
+                        fallback_to_default=True,
+                        position=[0, 0, 0],
+                        scale=0.001,  # mm을 m로 변환 (작동하는 파일과 동일)
+                        mass=0.5  # 적절한 질량
                     )
-                    sphere_bodies.append(body_id)
-                
-                # 테스트용 동적 객체들 생성
-                test_objects = self.create_test_objects_for_spheres()
-                
-                self.log(f"PyBullet 구체 테스트 준비 완료")
-                self.log("GUI에서 테스트 객체들이 구체들과 충돌하는지 확인하세요")
-                
-                messagebox.showinfo("PyBullet 구체 테스트", 
-                    f"PyBullet 창에서 충돌 테스트:\n"
-                    f"• {max_spheres}개 구체로 포인트 클라우드 표현\n"
-                    f"• 테스트 객체들의 충돌 관찰\n"
-                    f"• 구체 반지름: {collision_radius:.3f}m\n"
-                    f"• 창을 닫으면 테스트 종료")
+                    
+                    if ply_body_id is not None:
+                        self.log("원본 PLY 파일이 성공적으로 로드되었습니다!")
+                        
+                        # 2. 충돌 포인트들을 작은 구체로 표시 (대비용)
+                        self._add_collision_point_spheres()
+                        
+                        # 3. 테스트 객체들
+                        test_objects = self.create_enhanced_test_objects()
+                        
+                        messagebox.showinfo("고급 PyBullet 테스트", 
+                            f"향상된 PLY 시각화 완료:\n"
+                            f"• 원본 PLY 파일: 고품질 렌더링\n"
+                            f"• 충돌 포인트: 작은 구체로 표시\n"
+                            f"• 테스트 객체: 충돌 확인용\n"
+                            f"• ply_processor 모듈 사용")
+                        
+                    else:
+                        # ply_processor 실패시 기본 방식
+                        self.log("ply_processor 로드 실패, 기본 구체 방식 사용")
+                        self._run_basic_sphere_test()
+                else:
+                    # ply_processor 없으면 기본 방식
+                    self.log("ply_processor 없음, 기본 구체 방식 사용")
+                    self._run_basic_sphere_test()
                 
             finally:
-                # 사용자가 창을 닫을 때까지 대기
                 pass
                 
         except Exception as e:
-            error_msg = f"PyBullet 구체 테스트 실패: {str(e)}"
+            error_msg = f"PyBullet 테스트 실패: {str(e)}"
             self.log(error_msg)
             messagebox.showerror("오류", error_msg)
+    
+    def _add_collision_point_spheres(self):
+        """충돌 포인트들을 작은 구체로 추가"""
+        try:
+            metadata = self.point_cloud_metadata
+            collision_points = metadata['collision_points']
+            collision_radius = metadata['collision_radius']
+            
+            # 작은 빨간 구체로 충돌 포인트 표시
+            max_spheres = min(200, len(collision_points))  # 성능을 위해 제한
+            small_radius = collision_radius * 0.5  # 더 작게
+            
+            collision_shape = p.createCollisionShape(p.GEOM_SPHERE, radius=small_radius)
+            visual_shape = p.createVisualShape(p.GEOM_SPHERE, radius=small_radius, 
+                                             rgbaColor=[1.0, 0.2, 0.2, 0.6])  # 반투명 빨강
+            
+            self.log(f"충돌 포인트 구체 생성: {max_spheres}개")
+            
+            for i, point in enumerate(collision_points[:max_spheres]):
+                p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=collision_shape,
+                    baseVisualShapeIndex=visual_shape,
+                    basePosition=point.tolist()
+                )
+        except Exception as e:
+            self.log(f"충돌 포인트 구체 생성 실패: {e}")
+    
+    def _run_basic_sphere_test(self):
+        """기본 구체 테스트 (원래 방식)"""
+        try:
+            metadata = self.point_cloud_metadata
+            collision_points = metadata['collision_points']
+            collision_radius = metadata['collision_radius']
+            
+            # 구체들을 PyBullet에 생성 (그라데이션 색상)
+            max_spheres = min(500, len(collision_points))
+            
+            for i, point in enumerate(collision_points[:max_spheres]):
+                # 높이에 따른 그라데이션 색상
+                height_ratio = (point[2] - collision_points[:, 2].min()) / \
+                              (collision_points[:, 2].max() - collision_points[:, 2].min() + 1e-6)
+                
+                # 파란색에서 빨간색으로 그라데이션
+                color = [height_ratio, 0.3, 1.0 - height_ratio, 0.8]
+                
+                collision_shape = p.createCollisionShape(p.GEOM_SPHERE, radius=collision_radius)
+                visual_shape = p.createVisualShape(p.GEOM_SPHERE, radius=collision_radius, 
+                                                 rgbaColor=color)
+                
+                p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=collision_shape,
+                    baseVisualShapeIndex=visual_shape,
+                    basePosition=point.tolist()
+                )
+            
+            self.log(f"그라데이션 구체 생성 완료: {max_spheres}개")
+            
+        except Exception as e:
+            self.log(f"기본 구체 테스트 실패: {e}")
+    
+    def create_enhanced_test_objects(self):
+        """향상된 테스트 객체 생성"""
+        test_objects = []
+        
+        try:
+            # 1. 다양한 크기의 테스트 구들
+            for i, (radius, color, pos) in enumerate([
+                (0.01, [1, 0, 0, 1], [0, 0, 0.5]),     # 작은 빨간 구
+                (0.02, [0, 1, 0, 1], [0.1, 0, 0.5]),   # 중간 녹색 구  
+                (0.03, [0, 0, 1, 1], [-0.1, 0, 0.5])   # 큰 파란 구
+            ]):
+                sphere_shape = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
+                sphere_visual = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=color)
+                sphere_id = p.createMultiBody(0.1, sphere_shape, sphere_visual, pos)
+                test_objects.append((f"Test Sphere {i+1}", sphere_id))
+            
+            # 2. 회전하는 박스
+            box_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.02, 0.01, 0.03])
+            box_visual = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.02, 0.01, 0.03], 
+                                           rgbaColor=[1, 1, 0, 1])
+            box_id = p.createMultiBody(0.1, box_shape, box_visual, [0, 0.1, 0.5])
+            test_objects.append(("Rotating Box", box_id))
+            
+            # 3. 원통형 객체
+            cylinder_shape = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.015, height=0.05)
+            cylinder_visual = p.createVisualShape(p.GEOM_CYLINDER, radius=0.015, length=0.05,
+                                                rgbaColor=[1, 0, 1, 1])
+            cylinder_id = p.createMultiBody(0.1, cylinder_shape, cylinder_visual, [0, -0.1, 0.5])
+            test_objects.append(("Test Cylinder", cylinder_id))
+            
+        except Exception as e:
+            self.log(f"향상된 테스트 객체 생성 실패: {e}")
+        
+        return test_objects
     
     def generate_test_grid(self, bounds, density=10):
         """테스트용 그리드 포인트 생성"""
@@ -981,41 +1110,70 @@ class CollisionProcessorGUI:
         return test_objects
     
     def _run_interactive_collision_test(self):
-        """대화형 충돌 테스트"""
+        """대화형 충돌 테스트 (ply_processor 활용)"""
         try:
             self.log("대화형 충돌 테스트 시작...")
             
             # PyBullet GUI 초기화
             physics_client = p.connect(p.GUI)
             p.setGravity(0, 0, -9.81)
-            p.setAdditionalSearchPath(".")  # 현재 디렉토리 검색 경로 추가
+            p.setAdditionalSearchPath(".")
             
             # 바닥 평면 추가
             plane_id = p.loadURDF("plane.urdf") if os.path.exists("plane.urdf") else None
             
-            vhacd_path = self.processing_stats['vhacd_path']
-            obj_path = self.processing_stats['obj_path']
+            # ply_processor를 우선 사용 (작동하는 방식 적용)
+            main_body = None
+            if PLY_PROCESSOR_AVAILABLE and hasattr(self, 'current_filename'):
+                self.log("ply_processor로 향상된 PLY 렌더링 (작동하는 방식 적용)...")
+                
+                # 파일명만 추출 (경로 제거)
+                import os
+                ply_filename = os.path.basename(self.current_filename)
+                
+                # 작동하는 방식: load_pipe_from_ply 사용
+                main_body = load_pipe_from_ply(
+                    ply_filename=ply_filename,
+                    fallback_to_default=True,
+                    position=[0, 0, 0],
+                    scale=0.001,  # mm을 m로 변환 (작동하는 파일과 동일)
+                    mass=0.5  # 적절한 질량 설정
+                )
+                
+                if main_body is not None:
+                    self.log("ply_processor로 PLY 로드 성공!")
             
-            # 메인 충돌 객체 생성
-            collision_shape = p.createCollisionShape(
-                p.GEOM_MESH,
-                fileName=vhacd_path,
-                meshScale=[1.0, 1.0, 1.0]
-            )
+            # ply_processor 실패시 기존 방식 사용
+            if main_body is None and hasattr(self, 'processing_stats'):
+                self.log("기존 메시 파일 방식 사용...")
+                
+                vhacd_path = self.processing_stats['vhacd_path']
+                obj_path = self.processing_stats['obj_path']
+                
+                # 메인 충돌 객체 생성 (기존 방식)
+                collision_shape = p.createCollisionShape(
+                    p.GEOM_MESH,
+                    fileName=vhacd_path,
+                    meshScale=[1.0, 1.0, 1.0]
+                )
+                
+                visual_shape = p.createVisualShape(
+                    p.GEOM_MESH,
+                    fileName=obj_path,
+                    meshScale=[1.0, 1.0, 1.0],
+                    rgbaColor=[0.7, 0.7, 1.0, 0.8]
+                )
+                
+                main_body = p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=collision_shape,
+                    baseVisualShapeIndex=visual_shape,
+                    basePosition=[0, 0, 0]
+                )
             
-            visual_shape = p.createVisualShape(
-                p.GEOM_MESH,
-                fileName=obj_path,
-                meshScale=[1.0, 1.0, 1.0],
-                rgbaColor=[0.7, 0.7, 1.0, 0.8]
-            )
-            
-            main_body = p.createMultiBody(
-                baseMass=0,  # 정적 객체
-                baseCollisionShapeIndex=collision_shape,
-                baseVisualShapeIndex=visual_shape,
-                basePosition=[0, 0, 0]
-            )
+            if main_body is None:
+                self.log("충돌 객체 생성 실패!")
+                return
             
             # 다양한 테스트 객체들
             test_objects = []
