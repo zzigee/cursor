@@ -12,41 +12,151 @@ import tempfile  # 임시 파일 관리를 위한 모듈 추가
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (for 3D plotting)
 import csv
+import hashlib
+import json
 
-# tnwjd 
+
+# PLY 처리 모듈 import 추가
+from ply_processor import load_pipe_from_ply, load_ply_as_pybullet_body
+
 
 # 사용자 지정 데이터 경로 함수
 def get_data_path():
     return os.path.dirname(os.path.abspath(__file__))
 
-def convert_ply_to_obj(ply_path, obj_path):
-    # PLY 파일 로드
-    mesh = trimesh.load(ply_path)
+def get_file_hash(file_path):
+    """파일의 MD5 해시를 계산하여 캐시 키로 사용"""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def check_cache_valid(ply_path, obj_path, vhacd_path):
+    """캐시 파일이 유효한지 확인"""
+    cache_info_path = obj_path + ".cache_info"
     
-    # OBJ 파일로 저장
-    mesh.export(obj_path)
+    if not all(os.path.exists(f) for f in [obj_path, vhacd_path, cache_info_path]):
+        return False
     
-    return obj_path
+    try:
+        with open(cache_info_path, 'r') as f:
+            cache_info = json.load(f)
+        
+        current_hash = get_file_hash(ply_path)
+        return cache_info.get('source_hash') == current_hash
+    except:
+        return False
+
+def save_cache_info(ply_path, obj_path):
+    """캐시 정보 저장"""
+    cache_info_path = obj_path + ".cache_info"
+    cache_info = {
+        'source_hash': get_file_hash(ply_path),
+        'created_time': time.time(),
+        'source_file': ply_path
+    }
+    
+    with open(cache_info_path, 'w') as f:
+        json.dump(cache_info, f)
+
+def convert_ply_to_obj(ply_path, obj_path, timeout_seconds=60):
+    """PLY를 OBJ로 변환 (타임아웃과 폴백 메커니즘 포함)"""
+    start_time = time.time()
+    
+    try:
+        # PLY 파일 로드
+        mesh = trimesh.load(ply_path)
+        
+        # 포인트 클라우드인지 확인
+        if isinstance(mesh, trimesh.points.PointCloud):
+            original_count = len(mesh.vertices)
+            print(f"포인트 클라우드 감지: {original_count:,}개 포인트")
+            
+            # 극도로 큰 포인트 클라우드는 거부
+            if original_count > 1000000:  # 100만개 이상
+                print(f"경고: 너무 큰 포인트 클라우드 ({original_count:,}개)")
+                print("기본 파이프로 폴백합니다.")
+                return None
+            
+            # 대용량 포인트 클라우드 다운샘플링
+            max_points = 100000  # 최대 100K 포인트로 제한
+            if original_count > max_points:
+                print(f"대용량 포인트 클라우드 다운샘플링: {original_count:,} → {max_points:,}")
+                
+                # 균등한 간격으로 샘플링
+                step = original_count // max_points
+                indices = np.arange(0, original_count, step)[:max_points]
+                mesh.vertices = mesh.vertices[indices]
+                
+                print(f"다운샘플링 완료: {len(mesh.vertices):,}개 포인트")
+            
+            # 타임아웃 체크
+            if time.time() - start_time > timeout_seconds:
+                print("타임아웃 - 기본 파이프로 폴백")
+                return None
+            
+            print("Convex hull로 메시 변환 중...")
+            
+            # Convex hull을 사용하여 메시 생성
+            try:
+                mesh = mesh.convex_hull
+                print(f"Convex hull 생성 완료: {len(mesh.vertices):,}개 vertices, {len(mesh.faces):,}개 faces")
+            except Exception as e:
+                print(f"Convex hull 생성 실패: {e}")
+                print("기본 파이프로 폴백합니다.")
+                return None
+                
+        # 최종 타임아웃 체크
+        if time.time() - start_time > timeout_seconds:
+            print("타임아웃 - 기본 파이프로 폴백")
+            return None
+        
+        # OBJ 파일로 저장
+        mesh.export(obj_path)
+        print(f"변환 완료: {time.time() - start_time:.2f}초 소요")
+        
+        return obj_path
+        
+    except Exception as e:
+        print(f"PLY 변환 중 오류 발생: {e}")
+        print("기본 파이프로 폴백합니다.")
+        return None
 
 # VHACD를 사용하여 컨벡스 분해 수행
-def perform_convex_decomposition(mesh_path):
+def perform_convex_decomposition(mesh_path, fast_mode=False):
     print(f"메시 파일 '{mesh_path}'에 대해 컨벡스 분해 수행 중...")
     
-    # VHACD 파라미터 설정 - 처리 시간 단축을 위해 값 조정
+    if fast_mode:
+        print("고속 모드 활성화 - 성능 우선 파라미터 사용")
+        # 고속 처리를 위한 파라미터
+        concavity = 0.05         # 더 높은 값으로 단순화
+        resolution = 50000       # 해상도 절반으로 감소
+        depth = 6               # 분해 깊이 대폭 감소
+        maxVertices = 32        # 정점 수 절반으로 감소
+    else:
+        print("일반 모드 - 품질과 성능 균형 파라미터 사용")
+        # 기본 파라미터 (기존보다 약간 최적화)
+        concavity = 0.025       # 약간 증가
+        resolution = 75000      # 적당히 감소
+        depth = 8              # 약간 감소
+        maxVertices = 48       # 약간 감소
+    
+    # VHACD 파라미터 설정
     p.vhacd(
         mesh_path,               # 입력 OBJ 파일
         mesh_path + "_vhacd.obj",   # 출력 OBJ 파일
         "log.txt",               # 로그 파일
-        concavity=0.01,          # concavity 값 증가 (낮을수록 더 정확하지만 느림)
+        concavity=concavity,     # 동적 concavity 값
         alpha=0.04,              # alpha 값
         beta=0.05,               # beta 값
-        gamma=0.005,             # gamma 값 증가
-        minVolumePerCH=0.001,    # 최소 볼륨 증가
-        resolution=100000,       # 해상도 감소 (높을수록 더 정확하지만 느림)
-        maxNumVerticesPerCH=64,  # 볼록 헐당 최대 정점 수 감소
-        depth=10,                # 분해 깊이 감소
-        planeDownsampling=4,     # 평면 다운샘플링
-        convexhullDownsampling=4,# 볼록 헐 다운샘플링
+        gamma=0.01,              # gamma 값 증가
+        minVolumePerCH=0.002,    # 최소 볼륨 증가
+        resolution=resolution,   # 동적 해상도
+        maxNumVerticesPerCH=maxVertices,  # 동적 정점 수
+        depth=depth,             # 동적 분해 깊이
+        planeDownsampling=6,     # 다운샘플링 증가
+        convexhullDownsampling=6,# 볼록 헐 다운샘플링 증가
         pca=0,                   # PCA 활성화 여부
         mode=0,                  # 볼륨 기반 분해 모드
         convexhullApproximation=1 # 볼록 헐 근사 활성화
@@ -76,24 +186,25 @@ def modify_urdf_mesh_paths(urdf_file, output_file):
     tree.write(output_file)
     return output_file
 
-# 충돌 검사 함수 추가 
-def check_collision(robot_id, joint_positions, pipe_id=None):
-    """로봇의 현재 관절 위치에서 충돌이 있는지 확인하고 충돌된 링크를 반환"""
+# 충돌 검사 함수 추가 (멀티 로봇 지원)
+def check_collision(robot_id, joint_positions, pipe_id=None, other_robots=None):
+    """로봇의 현재 관절 위치에서 충돌이 있는지 확인하고 충돌된 링크를 반환 (멀티 로봇 지원)"""
     # 관절 위치 설정
     for i, pos in enumerate(joint_positions):
         p.resetJointState(robot_id, i, pos)
     
-    # 로봇의 모든 충돌 검사 (파이프 포함)
+    # 로봇의 모든 충돌 검사 (파이프 및 다른 로봇 포함)
     all_contact_points = p.getContactPoints(robot_id)
     collision_links = set()
     pipe_collision = False
+    robot_collision = False
     
     # 충돌이 있는지 확인
     has_collision = len(all_contact_points) > 0
     
     # 모든 접촉점 디버깅 (로봇과 모든 객체 사이의 충돌)
     if has_collision:
-        print(f"로봇 충돌 감지: 접촉점 수={len(all_contact_points)}")
+        print(f"로봇 {robot_id} 충돌 감지: 접촉점 수={len(all_contact_points)}")
         for i, contact in enumerate(all_contact_points):
             print(f"  일반 접촉점 {i+1}: bodyA={contact[1]}, bodyB={contact[2]}, 링크A={contact[3]}, 링크B={contact[4]}")
     
@@ -110,12 +221,19 @@ def check_collision(robot_id, joint_positions, pipe_id=None):
             # 로봇과 파이프의 충돌 확인
             if pipe_id is not None and bodyB == pipe_id:
                 pipe_collision = True
-                print(f"  -> 파이프와 충돌! (로봇 링크 {linkA} - 파이프)")
+                print(f"  -> 로봇 {robot_id}이 파이프와 충돌! (로봇 링크 {linkA} - 파이프)")
+            # 로봇과 다른 로봇의 충돌 확인
+            elif other_robots is not None and bodyB in other_robots:
+                robot_collision = True
+                print(f"  -> 로봇 {robot_id}이 로봇 {bodyB}와 충돌! (링크 {linkA} - 링크 {contact[4]})")
         elif bodyB == robot_id:  # 충돌 순서가 반대인 경우도 확인
             collision_links.add(contact[4])  # 로봇 링크 인덱스
             if pipe_id is not None and bodyA == pipe_id:
                 pipe_collision = True
-                print(f"  -> 파이프와 충돌! (파이프 - 로봇 링크 {contact[4]})")
+                print(f"  -> 파이프가 로봇 {robot_id}와 충돌! (파이프 - 로봇 링크 {contact[4]})")
+            elif other_robots is not None and bodyA in other_robots:
+                robot_collision = True
+                print(f"  -> 로봇 {bodyA}이 로봇 {robot_id}와 충돌! (링크 {contact[3]} - 링크 {contact[4]})")
     
     # 파이프와의 충돌 확인 (파이프 ID가 제공된 경우)
     if pipe_id is not None:
@@ -124,7 +242,7 @@ def check_collision(robot_id, joint_positions, pipe_id=None):
         
         if len(pipe_contacts) > 0:
             pipe_collision = True
-            print(f"파이프 충돌 접촉점 수: {len(pipe_contacts)}")  # 디버깅용
+            print(f"로봇 {robot_id} 파이프 충돌 접촉점 수: {len(pipe_contacts)}")  # 디버깅용
             
             # 추가 디버그 정보
             for i, contact in enumerate(pipe_contacts):
@@ -139,7 +257,28 @@ def check_collision(robot_id, joint_positions, pipe_id=None):
                     lifeTime=0.5  # 0.5초 동안 표시
                 )
     
-    return has_collision, collision_links, pipe_collision
+    # 다른 로봇들과의 충돌 확인 (다른 로봇 ID가 제공된 경우)
+    if other_robots is not None:
+        for other_robot_id in other_robots:
+            if other_robot_id != robot_id:
+                robot_contacts = p.getContactPoints(robot_id, other_robot_id)
+                if len(robot_contacts) > 0:
+                    robot_collision = True
+                    print(f"로봇 {robot_id}과 로봇 {other_robot_id} 충돌 접촉점 수: {len(robot_contacts)}")
+                    
+                    # 로봇 간 충돌 지점에 디버그 라인 추가
+                    for i, contact in enumerate(robot_contacts):
+                        print(f"  로봇간 접촉점 {i+1}: 로봇1 링크 {contact[3]}, 로봇2 링크 {contact[4]}, 거리: {contact[8]}")
+                        
+                        p.addUserDebugLine(
+                            contact[5],  # 접촉점 위치 A
+                            contact[6],  # 접촉점 위치 B
+                            [1, 0.5, 0],   # 주황색 (로봇 간 충돌)
+                            lineWidth=3.0,
+                            lifeTime=0.5
+                        )
+    
+    return has_collision, collision_links, pipe_collision, robot_collision
 
 def get_random_configuration(robot_id):
     """로봇의 무작위 관절 위치 생성"""
@@ -201,29 +340,31 @@ def choose_parent(near_nodes, q_new):
             best_parent = node
     return best_parent, min_cost
 
-def rewire(tree, near_nodes, new_node, robot_id):
+def rewire(tree, near_nodes, new_node, robot_id, pipe_id=None, other_robots=None):
     for node in near_nodes:
         new_cost = new_node['cost'] + get_cost(new_node['config'], node['config'])
         if new_cost < node['cost']:
-            is_collision, _, _ = check_collision(robot_id, node['config'])
+            collision_result = check_collision(robot_id, node['config'], pipe_id, other_robots)
+            is_collision = collision_result[0]  # has_collision
             if not is_collision:
                 node['parent'] = new_node
                 node['cost'] = new_cost
 
-def rrt_star_plan(robot_id, start_config, goal_config, max_iterations=5000, step_size=0.05, radius=0.5):
+def rrt_star_plan(robot_id, start_config, goal_config, max_iterations=5000, step_size=0.05, radius=0.5, pipe_id=None, other_robots=None):
     tree = [{'config': start_config, 'parent': None, 'cost': 0}]
     for iteration in range(max_iterations):
         q_rand = goal_config if random.random() < 0.1 else get_random_configuration(robot_id)
         nearest_node = find_nearest_node(tree, q_rand)
         q_near = nearest_node['config']
         q_new = steer(q_near, q_rand, step_size)
-        is_collision, _, _ = check_collision(robot_id, q_new)
+        collision_result = check_collision(robot_id, q_new, pipe_id, other_robots)
+        is_collision = collision_result[0]  # has_collision
         if not is_collision:
             near_nodes = find_near_nodes(tree, q_new, radius)
             best_parent, min_cost = choose_parent(near_nodes, q_new)
             new_node = {'config': q_new, 'parent': best_parent, 'cost': min_cost}
             tree.append(new_node)
-            rewire(tree, near_nodes, new_node, robot_id)
+            rewire(tree, near_nodes, new_node, robot_id, pipe_id, other_robots)
             if distance_between_configurations(q_new, goal_config) < step_size:
                 path = []
                 current = new_node
@@ -232,7 +373,7 @@ def rrt_star_plan(robot_id, start_config, goal_config, max_iterations=5000, step
                     current = current['parent']
                 return list(reversed(path))
         if iteration % 100 == 0:
-            print(f"RRT* 진행 중... {iteration}/{max_iterations}")
+            print(f"로봇 {robot_id} RRT* 진행 중... {iteration}/{max_iterations}")
     return None
 
 def get_link_position(robot_id, joint_positions):
@@ -241,15 +382,24 @@ def get_link_position(robot_id, joint_positions):
     for i, pos in enumerate(joint_positions):
         p.resetJointState(robot_id, i, pos)
     
+    # TCP 링크 찾기 - DDA와 일반 URDF 모두 대응
+    num_joints = p.getNumJoints(robot_id)
+    tcp_link_index = num_joints - 1  # 기본적으로 마지막 링크
+    
+    # 링크 이름 확인으로 TCP 링크 정확히 찾기
+    for i in range(num_joints):
+        joint_info = p.getJointInfo(robot_id, i)
+        link_name = joint_info[12].decode('utf-8')  # child link name
+        if 'tcp' in link_name.lower():
+            tcp_link_index = i
+            break
+    
     # TCP 링크의 상태 가져오기
-    tcp_link_state = p.getLinkState(robot_id, p.getNumJoints(robot_id)-1)
+    tcp_link_state = p.getLinkState(robot_id, tcp_link_index)
     return tcp_link_state[0]  # 위치 반환
 
-def visualize_path(robot_id, path):
-    """경로를 시각화"""
-    # 이전에 그려진 라인 제거
-    p.removeAllUserDebugItems()
-    
+def visualize_path(robot_id, path, color=[0, 1, 0]):
+    """경로를 시각화 (멀티 로봇 지원, 로봇별 다른 색상)"""
     # 경로의 각 지점에서 TCP 위치 계산
     points = []
     for config in path:
@@ -261,19 +411,156 @@ def visualize_path(robot_id, path):
         p.addUserDebugLine(
             points[i],
             points[i+1],
-            lineColorRGB=[0, 1, 0],  # 초록색
+            lineColorRGB=color,  # 로봇별 다른 색상
             lineWidth=2.0,
             lifeTime=0  # 0 = 영구적으로 표시
         )
 
-def reset_simulation(robot_id, pipe_id):
-    """시뮬레이션을 초기 상태로 리셋"""
+def draw_coordinate_axes(object_id, scale=0.1):
+    """객체의 원점에 XYZ 좌표축 화살표를 그리는 함수"""
+    if object_id == -1:  # 월드 원점
+        position = [0, 0, 0]
+        orientation = [0, 0, 0, 1]
+    else:
+        # 객체의 위치와 방향 가져오기
+        position, orientation = p.getBasePositionAndOrientation(object_id)
+    
+    # 회전 행렬로 변환하여 축 방향 계산
+    rotation_matrix = p.getMatrixFromQuaternion(orientation)
+    
+    # X, Y, Z 축 방향 벡터 계산
+    x_axis = [rotation_matrix[0] * scale, rotation_matrix[3] * scale, rotation_matrix[6] * scale]
+    y_axis = [rotation_matrix[1] * scale, rotation_matrix[4] * scale, rotation_matrix[7] * scale]
+    z_axis = [rotation_matrix[2] * scale, rotation_matrix[5] * scale, rotation_matrix[8] * scale]
+    
+    # 축 끝점 위치 계산
+    x_end = [position[0] + x_axis[0], position[1] + x_axis[1], position[2] + x_axis[2]]
+    y_end = [position[0] + y_axis[0], position[1] + y_axis[1], position[2] + y_axis[2]]
+    z_end = [position[0] + z_axis[0], position[1] + z_axis[1], position[2] + z_axis[2]]
+    
+    # X축 화살표 (빨간색)
+    p.addUserDebugLine(
+        position, x_end, 
+        lineColorRGB=[1, 0, 0], 
+        lineWidth=3.0, 
+        lifeTime=0
+    )
+    
+    # Y축 화살표 (초록색)  
+    p.addUserDebugLine(
+        position, y_end, 
+        lineColorRGB=[0, 1, 0], 
+        lineWidth=3.0, 
+        lifeTime=0
+    )
+    
+    # Z축 화살표 (파란색)
+    p.addUserDebugLine(
+        position, z_end, 
+        lineColorRGB=[0, 0, 1], 
+        lineWidth=3.0, 
+        lifeTime=0
+    )
+    
+    # 축 라벨 텍스트 추가
+    p.addUserDebugText("X", x_end, textColorRGB=[1, 0, 0], textSize=1.0, lifeTime=0)
+    p.addUserDebugText("Y", y_end, textColorRGB=[0, 1, 0], textSize=1.0, lifeTime=0)
+    p.addUserDebugText("Z", z_end, textColorRGB=[0, 0, 1], textSize=1.0, lifeTime=0)
+
+def draw_link_coordinate_axes(robot_id, scale=0.08):
+    """로봇의 모든 링크에 좌표축을 표시하는 함수"""
+    num_joints = p.getNumJoints(robot_id)
+    
+    for link_index in range(num_joints):
+        # 링크 상태 가져오기
+        link_state = p.getLinkState(robot_id, link_index)
+        position = link_state[0]  # 링크 위치
+        orientation = link_state[1]  # 링크 방향
+        
+        # 링크 이름 가져오기
+        joint_info = p.getJointInfo(robot_id, link_index)
+        link_name = joint_info[12].decode('utf-8')
+        
+        # 회전 행렬로 변환하여 축 방향 계산
+        rotation_matrix = p.getMatrixFromQuaternion(orientation)
+        
+        # X, Y, Z 축 방향 벡터 계산
+        x_axis = [rotation_matrix[0] * scale, rotation_matrix[3] * scale, rotation_matrix[6] * scale]
+        y_axis = [rotation_matrix[1] * scale, rotation_matrix[4] * scale, rotation_matrix[7] * scale]
+        z_axis = [rotation_matrix[2] * scale, rotation_matrix[5] * scale, rotation_matrix[8] * scale]
+        
+        # 축 끝점 위치 계산
+        x_end = [position[0] + x_axis[0], position[1] + x_axis[1], position[2] + x_axis[2]]
+        y_end = [position[0] + y_axis[0], position[1] + y_axis[1], position[2] + y_axis[2]]
+        z_end = [position[0] + z_axis[0], position[1] + z_axis[1], position[2] + z_axis[2]]
+        
+        # 링크별로 다른 색상 강도 사용 (베이스 객체보다 연한 색)
+        alpha = 0.7  # 투명도
+        
+        # X축 화살표 (연한 빨간색)
+        p.addUserDebugLine(
+            position, x_end, 
+            lineColorRGB=[1, 0.3, 0.3], 
+            lineWidth=2.0, 
+            lifeTime=0
+        )
+        
+        # Y축 화살표 (연한 초록색)  
+        p.addUserDebugLine(
+            position, y_end, 
+            lineColorRGB=[0.3, 1, 0.3], 
+            lineWidth=2.0, 
+            lifeTime=0
+        )
+        
+        # Z축 화살표 (연한 파란색)
+        p.addUserDebugLine(
+            position, z_end, 
+            lineColorRGB=[0.3, 0.3, 1], 
+            lineWidth=2.0, 
+            lifeTime=0
+        )
+        
+        # TCP 링크이면 특별히 표시
+        if 'tcp' in link_name.lower():
+            # TCP 링크는 더 큰 텍스트로 표시
+            p.addUserDebugText(
+                f"TCP", 
+                [position[0], position[1], position[2] + 0.05], 
+                textColorRGB=[1, 1, 0], 
+                textSize=1.2, 
+                lifeTime=0
+            )
+        else:
+            # 일반 링크는 작은 텍스트로 링크 이름 표시
+            p.addUserDebugText(
+                f"L{link_index}", 
+                [position[0], position[1], position[2] + 0.03], 
+                textColorRGB=[0.7, 0.7, 0.7], 
+                textSize=0.8, 
+                lifeTime=0
+            )
+
+def reset_simulation(robots, pipe_id, robot_simulation_states):
+    """모든 로봇의 시뮬레이션을 초기 상태로 리셋"""
     # 이전에 그려진 경로 제거
     p.removeAllUserDebugItems()
     
-    # 로봇의 모든 관절을 초기 위치로 리셋
-    for i in range(p.getNumJoints(robot_id)):
-        p.resetJointState(robot_id, i, 0.0)
+    # 모든 로봇의 관절을 초기 위치로 리셋
+    for robot_id in robots:
+        for i in range(p.getNumJoints(robot_id)):
+            p.resetJointState(robot_id, i, 0.0)
+        
+        # 로봇 색상 초기화
+        for i in range(p.getNumJoints(robot_id)):
+            p.changeVisualShape(robot_id, i, rgbaColor=[1, 1, 1, 1])
+        
+        # 로봇 시뮬레이션 상태 초기화
+        robot_simulation_states[robot_id] = {
+            'simulation_started': False,
+            'path_index': 0,
+            'collision_detected': False
+        }
     
     # 파이프 위치 리셋
     p.resetBasePositionAndOrientation(pipe_id, [0, 0.5, -0.50], [0, 0, 0, 1])
@@ -281,17 +568,29 @@ def reset_simulation(robot_id, pipe_id):
     # 파이프 색상 초기화
     p.changeVisualShape(pipe_id, -1, rgbaColor=[1, 1, 1, 1])
     
+    # 좌표축 다시 그리기
+    draw_coordinate_axes(-1, scale=0.3)  # 월드 원점
+    if pipe_id is not None:
+        draw_coordinate_axes(pipe_id, scale=0.2)  # 파이프
+    for robot_id in robots:
+        draw_coordinate_axes(robot_id, scale=0.15)  # 각 로봇
+    
     return True
 
-def highlight_collision_links(robot_id, collision_links, pipe_id=None, pipe_collision=False):
-    """충돌한 링크와 파이프를 빨간색으로 강조 표시"""
+def highlight_collision_links(robot_id, collision_links, pipe_id=None, pipe_collision=False, robot_collision=False):
+    """충돌한 링크와 파이프를 색상으로 강조 표시 (멀티 로봇 지원)"""
     # 모든 링크의 색상을 원래대로 복원
     for i in range(p.getNumJoints(robot_id)):
         p.changeVisualShape(robot_id, i, rgbaColor=[1, 1, 1, 1])
     
-    # 충돌한 링크를 빨간색으로 표시
+    # 충돌한 링크를 색상으로 표시
     for link_index in collision_links:
-        p.changeVisualShape(robot_id, link_index, rgbaColor=[1, 0, 0, 1])
+        if robot_collision:
+            # 로봇 간 충돌은 주황색으로 표시
+            p.changeVisualShape(robot_id, link_index, rgbaColor=[1, 0.5, 0, 1])
+        else:
+            # 파이프 충돌은 빨간색으로 표시
+            p.changeVisualShape(robot_id, link_index, rgbaColor=[1, 0, 0, 1])
     
     # 파이프와 충돌 시 파이프 색상 변경
     if pipe_id is not None:
@@ -354,6 +653,11 @@ def main():
             print(f"연결 시도 중 오류: {e}")
             return 1
             
+        # 멀티 로봇 데이터 구조 초기화
+        robots = {}  # 로봇 ID를 키로 하는 로봇 데이터 딕셔너리
+        robot_paths = {}  # 각 로봇의 경로
+        robot_simulation_states = {}  # 각 로봇의 시뮬레이션 상태
+            
         # 데이터 경로 설정 (pybullet_data 사용하지 않음)
         p.setGravity(0, 0, -9.81)  # 중력을 0으로 설정
         p.setRealTimeSimulation(0)  # 실시간 시뮬레이션 비활성화
@@ -364,53 +668,71 @@ def main():
         p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 1)  # 그림자 활성화
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)  # 렌더링 활성화
         
-        # 사용자 정의 디버그 매개변수 추가
-        camera_distance_slider = p.addUserDebugParameter("Camera Distance", 0.1, 5.0, 2.0)
-        camera_yaw_slider = p.addUserDebugParameter("Camera Yaw", -180, 180, 0)
-        camera_pitch_slider = p.addUserDebugParameter("Camera Pitch", -89, 89, 0)
-        reset_camera_button = p.addUserDebugParameter("Reset Camera", 1, 0, 0)
-        prev_reset_camera_state = p.readUserDebugParameter(reset_camera_button)
-
-        # 카메라 초기 설정
-        camera_distance = 2.0
-        camera_yaw = 0
-        camera_pitch = 0
-        camera_target = [0, 0, 0]
+        # Synthetic Camera 창들 비활성화
+        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
         
+        # 와이어프레임 모드 비활성화 (솔리드 렌더링)
+        p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 0)
+        
+        # 카메라 컨트롤 GUI 제거 - 마우스로만 제어
+
         # 초기 카메라 위치 설정
         p.resetDebugVisualizerCamera(
-            cameraDistance=camera_distance,
-            cameraYaw=camera_yaw,
-            cameraPitch=camera_pitch,
-            cameraTargetPosition=camera_target
+            cameraDistance=2.0,
+            cameraYaw=0,
+            cameraPitch=0,
+            cameraTargetPosition=[0, 0, 0]
         )
         
         # 카메라 제어 설명
         print("\n카메라 제어 방법:")
-        print("- Camera Distance/Yaw/Pitch 슬라이더: 카메라 위치 조절")
-        print("- Reset Camera 버튼: 카메라 초기 위치로 리셋")
-        print("- 마우스 제어: PyBullet 내장 카메라 제어 사용")
+        print("- 마우스 드래그: 카메라 회전")
+        print("- 마우스 스크롤: 줌 인/아웃")
+        print("- 마우스 중간버튼 드래그: 카메라 이동")
 
-        # GUI 요소 추가
-        # 시작 위치 입력
-        start_x = p.addUserDebugParameter("Start X", -1.0, 1.0, 0.0)
-        start_y = p.addUserDebugParameter("Start Y", -1.0, 1.0, 0.0)
-        start_z = p.addUserDebugParameter("Start Z", -1.0, 1.0, 0.0)
+        # GUI 요소 추가 (로봇 1번)
+        # 로봇 1 시작 위치 입력
+        robot1_start_x = p.addUserDebugParameter("Robot1 Start X", -1.0, 1.0, 0.0)
+        robot1_start_y = p.addUserDebugParameter("Robot1 Start Y", -1.0, 1.0, 0.0)
+        robot1_start_z = p.addUserDebugParameter("Robot1 Start Z", -1.0, 1.0, 0.0)
         
-        # 시작 자세 입력 (롤, 피치, 요)
-        start_roll = p.addUserDebugParameter("Start Roll", -3.14, 3.14, 0.0)
-        start_pitch = p.addUserDebugParameter("Start Pitch", -3.14, 3.14, 0.0)
-        start_yaw = p.addUserDebugParameter("Start Yaw", -3.14, 3.14, 0.0)
+        # 로봇 1 시작 자세 입력 (롤, 피치, 요)
+        robot1_start_roll = p.addUserDebugParameter("Robot1 Start Roll", -3.14, 3.14, 0.0)
+        robot1_start_pitch = p.addUserDebugParameter("Robot1 Start Pitch", -3.14, 3.14, 0.0)
+        robot1_start_yaw = p.addUserDebugParameter("Robot1 Start Yaw", -3.14, 3.14, 0.0)
         
-        # 종료 위치 입력 (독립적인 종료점)
-        end_x = p.addUserDebugParameter("End X", -1.0, 1.0, 0.0)
-        end_y = p.addUserDebugParameter("End Y", -1.0, 1.0, 0.2)
-        end_z = p.addUserDebugParameter("End Z", -1.0, 1.0, -0.3)
+        # 로봇 1 종료 위치 입력
+        robot1_end_x = p.addUserDebugParameter("Robot1 End X", -1.0, 1.0, 0.0)
+        robot1_end_y = p.addUserDebugParameter("Robot1 End Y", -1.0, 1.0, 0.2)
+        robot1_end_z = p.addUserDebugParameter("Robot1 End Z", -1.0, 1.0, -0.3)
         
-        # 종료 자세 입력 (롤, 피치, 요)
-        end_roll = p.addUserDebugParameter("End Roll", -3.14, 3.14, 0.0)
-        end_pitch = p.addUserDebugParameter("End Pitch", -3.14, 3.14, 0.0)
-        end_yaw = p.addUserDebugParameter("End Yaw", -3.14, 3.14, 0.0)
+        # 로봇 1 종료 자세 입력 (롤, 피치, 요)
+        robot1_end_roll = p.addUserDebugParameter("Robot1 End Roll", -3.14, 3.14, 0.0)
+        robot1_end_pitch = p.addUserDebugParameter("Robot1 End Pitch", -3.14, 3.14, 0.0)
+        robot1_end_yaw = p.addUserDebugParameter("Robot1 End Yaw", -3.14, 3.14, 0.0)
+        
+        # GUI 요소 추가 (로봇 2번)
+        # 로봇 2 시작 위치 입력
+        robot2_start_x = p.addUserDebugParameter("Robot2 Start X", -1.0, 1.0, 0.5)
+        robot2_start_y = p.addUserDebugParameter("Robot2 Start Y", -1.0, 1.0, 0.0)
+        robot2_start_z = p.addUserDebugParameter("Robot2 Start Z", -1.0, 1.0, 0.0)
+        
+        # 로봇 2 시작 자세 입력 (롤, 피치, 요)
+        robot2_start_roll = p.addUserDebugParameter("Robot2 Start Roll", -3.14, 3.14, 0.0)
+        robot2_start_pitch = p.addUserDebugParameter("Robot2 Start Pitch", -3.14, 3.14, 0.0)
+        robot2_start_yaw = p.addUserDebugParameter("Robot2 Start Yaw", -3.14, 3.14, 0.0)
+        
+        # 로봇 2 종료 위치 입력
+        robot2_end_x = p.addUserDebugParameter("Robot2 End X", -1.0, 1.0, 0.5)
+        robot2_end_y = p.addUserDebugParameter("Robot2 End Y", -1.0, 1.0, 0.2)
+        robot2_end_z = p.addUserDebugParameter("Robot2 End Z", -1.0, 1.0, -0.3)
+        
+        # 로봇 2 종료 자세 입력 (롤, 피치, 요)
+        robot2_end_roll = p.addUserDebugParameter("Robot2 End Roll", -3.14, 3.14, 0.0)
+        robot2_end_pitch = p.addUserDebugParameter("Robot2 End Pitch", -3.14, 3.14, 0.0)
+        robot2_end_yaw = p.addUserDebugParameter("Robot2 End Yaw", -3.14, 3.14, 0.0)
         
         # 파이프 위치 조절
         pipe_x = p.addUserDebugParameter("Pipe X", -5.0, 5.0, 0.0)
@@ -425,146 +747,50 @@ def main():
         # 시뮬레이션 속도 조절
         speed_slider = p.addUserDebugParameter("Simulation Speed", 0.1, 2.0, 1.0)
         
-        # 시작 버튼 (0 = 시작 안 됨, 1 = 시작)
-        start_button = p.addUserDebugParameter("Start Simulation", 1, 0, 0)
+        # 로봇 원점 위치 및 자세 설정을 위한 텍스트 입력 박스 추가
+        robot1_base_x_text = p.addUserDebugParameter("Robot1 Base X", -5.0, 5.0, 0.0)
+        robot1_base_y_text = p.addUserDebugParameter("Robot1 Base Y", -5.0, 5.0, 0.0)
+        robot1_base_z_text = p.addUserDebugParameter("Robot1 Base Z", -5.0, 5.0, 0.0)
+        robot1_base_roll_text = p.addUserDebugParameter("Robot1 Base Roll", -3.14, 3.14, 0.0)
+        robot1_base_pitch_text = p.addUserDebugParameter("Robot1 Base Pitch", -3.14, 3.14, 0.0)
+        robot1_base_yaw_text = p.addUserDebugParameter("Robot1 Base Yaw", -3.14, 3.14, 3.14)  # 180도 기본값
         
-        # 초기화 버튼 (0 = 초기화 안 됨, 1 = 초기화)
-        reset_button = p.addUserDebugParameter("Reset Simulation", 1, 0, 0)
+        robot2_base_x_text = p.addUserDebugParameter("Robot2 Base X", -5.0, 5.0, 1.0)
+        robot2_base_y_text = p.addUserDebugParameter("Robot2 Base Y", -5.0, 5.0, 0.0)
+        robot2_base_z_text = p.addUserDebugParameter("Robot2 Base Z", -5.0, 5.0, 0.0)
+        robot2_base_roll_text = p.addUserDebugParameter("Robot2 Base Roll", -3.14, 3.14, 0.0)
+        robot2_base_pitch_text = p.addUserDebugParameter("Robot2 Base Pitch", -3.14, 3.14, 0.0)
+        robot2_base_yaw_text = p.addUserDebugParameter("Robot2 Base Yaw", -3.14, 3.14, 3.14)  # 180도 기본값
+        
+        # Apply 버튼 추가
+        apply_robot_base_button = p.addUserDebugParameter("Apply Robot Base", 1, 1, 1)
+        
+        # 로봇별 시작 버튼
+        robot1_start_button = p.addUserDebugParameter("Robot1 Start", 1, 0, 0)
+        robot2_start_button = p.addUserDebugParameter("Robot2 Start", 1, 0, 0)
+        
+        # 전체 초기화 버튼
+        reset_button = p.addUserDebugParameter("Reset All", 1, 0, 0)
         
         # 이전 버튼 상태 저장
-        previous_button_state = p.readUserDebugParameter(start_button)
+        previous_robot1_button_state = p.readUserDebugParameter(robot1_start_button)
+        previous_robot2_button_state = p.readUserDebugParameter(robot2_start_button)
         previous_reset_state = p.readUserDebugParameter(reset_button)
 
         # 현재 디렉토리 가져오기
         current_dir = get_data_path()
         print(f"현재 디렉토리: {current_dir}")
 
-        # PLY 파일을 OBJ로 변환하고 컨벡스 분해 수행
-        ply_path = os.path.join(current_dir, "pipe.ply")
-        pipe_id = None
-        
-        if not os.path.exists(ply_path):
-            print(f"PLY 파일을 찾을 수 없습니다: {ply_path}")
-            print("기본 원통형 파이프를 생성합니다.")
-            
-            # 기본 원통형 파이프 생성
-            pipe_radius = 0.03  # 3cm 반지름
-            pipe_length = 0.3   # 30cm 길이
-            
-            visual_shape_id = p.createVisualShape(
-                shapeType=p.GEOM_CYLINDER,
-                radius=pipe_radius,
-                length=pipe_length,
-                rgbaColor=[1, 1, 1, 1],  # 흰색
-                specularColor=[0.4, 0.4, 0.4],
-                visualFramePosition=[0, 0, 0]
-            )
-            
-            collision_shape_id = p.createCollisionShape(
-                shapeType=p.GEOM_CYLINDER,
-                radius=pipe_radius,
-                height=pipe_length,
-                collisionFramePosition=[0, 0, 0]
-            )
-            
-            print(f"원통형 파이프 생성: 반지름={pipe_radius}m, 길이={pipe_length}m")
-            
-            # 파이프의 위치 설정
-            pipe_position = [0, 0.5, -0.50]  # X: 0mm, Y: 500mm, Z: -500mm
-            
-            # 파이프 회전 - X축 방향으로 90도 회전 (가로로 눕힘)
-            pipe_orientation = p.getQuaternionFromEuler([math.pi/2, 0, 0])
-            
-            pipe_id = p.createMultiBody(
-                baseMass=0.5,  # 충분한 질량 부여
-                baseVisualShapeIndex=visual_shape_id,
-                baseCollisionShapeIndex=collision_shape_id,
-                basePosition=pipe_position,
-                baseOrientation=pipe_orientation
-            )
-        else:
-            # OBJ 파일 경로 설정
-            obj_path = os.path.join(current_dir, "pipe.obj")
-            convert_ply_to_obj(ply_path, obj_path)
-            
-            # 메시 스케일 설정
-            mesh_scale = [0.001, 0.001, 0.001]  # mm 단위를 m 단위로 변환
-            
-            # 컨벡스 분해 수행
-            decomposed_obj_path = perform_convex_decomposition(obj_path)
-            
-            print(f"컨벡스 분해된 OBJ 파일: {decomposed_obj_path}")
-            
-            # OBJ 파일 로드 - 고품질 시각적 형상
-            visual_shape_id = p.createVisualShape(
-                shapeType=p.GEOM_MESH,
-                fileName=obj_path,  # 원본 메시를 시각적 형상으로 사용
-                rgbaColor=[1, 1, 1, 1],
-                specularColor=[0.4, 0.4, 0.4],
-                visualFramePosition=[0, 0, 0],
-                meshScale=mesh_scale
-            )
-            
-            # 컨벡스 분해된 충돌 형상 생성
-            collision_shape_id = p.createCollisionShape(
-                shapeType=p.GEOM_MESH,
-                fileName=decomposed_obj_path,  # 컨벡스 분해된 메시를 충돌 형상으로 사용
-                collisionFramePosition=[0, 0, 0],
-                meshScale=mesh_scale
-            )
-            
-            print(f"파이프 시각적 형상: 원본 OBJ 메시, 충돌 형상: 컨벡스 분해 메시 (스케일={mesh_scale[0]})")
-            
-            # 파이프의 위치 설정
-            pipe_position = [0, 0.5, -0.50]
-            
-            # 파이프 회전 - X축 방향으로 90도 회전 (가로로 눕힘)
-            pipe_orientation = p.getQuaternionFromEuler([math.pi/2, 0, 0])
-            
-            # 파이프의 충돌 플래그 설정
-            collision_flags = p.URDF_USE_INERTIA_FROM_FILE | p.URDF_USE_SELF_COLLISION
-            
-            pipe_id = p.createMultiBody(
-                baseMass=0.5,  # 충분한 질량 부여
-                baseVisualShapeIndex=visual_shape_id,
-                baseCollisionShapeIndex=collision_shape_id,
-                basePosition=pipe_position,
-                baseOrientation=pipe_orientation,
-                flags=collision_flags
-            )
-        
-        # 파이프의 충돌 속성 설정
-        p.changeDynamics(
-            pipe_id, 
-            -1,  # 베이스 링크
-            contactStiffness=50000.0,
-            contactDamping=1000.0,
-            restitution=0.01,
-            lateralFriction=0.5,
-            collisionMargin=0.0001  # 충돌 마진 최소화
-        )
-        
+        pipe_id = load_pipe_from_ply("pipe.ply", fallback_to_default=True)
+
+        if pipe_id is None:
+            print("파이프 로드에 실패했습니다.")
+            return 1
+
         print(f"파이프 객체 ID: {pipe_id}")
-        
-        # 고품질 와이어프레임 모드 설정
-        p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 1)
-        
-        # 추가적인 디버그 옵션 활성화
-        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)  # 그림자 비활성화
-        
-        # 컨벡스 분해된 파이프 충돌 형상 표시 디버그 텍스트
-        p.addUserDebugText(
-            "컨벡스 분해 파이프 충돌 형상",
-            [pipe_position[0], pipe_position[1], pipe_position[2] + 0.1],
-            textColorRGB=[1, 0, 0],
-            textSize=1.5
-        )
-        
-        # 컨벡스 헐 시각화 활성화
-        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 1)
-        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 1)
-        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 1)
-        
+
+
+
         # 키 입력 정보 추가
         p.addUserDebugText(
             "W 키: 와이어프레임 모드 전환",
@@ -573,116 +799,228 @@ def main():
             textSize=1.5
         )
 
-        # 로봇 로드 (절대 경로 사용)
-        robot_path = os.path.join(current_dir, "rb10_1300e.urdf")
-        if not os.path.exists(robot_path):
-            raise Exception(f"Robot URDF 파일을 찾을 수 없습니다: {robot_path}")
+        # 로봇 로드 (절대 경로 사용) - 2대 로봇 로드 (서로 다른 URDF 사용)
+        # 로봇 1용 URDF (DDA 버전 - 메시 파일 참조 수정 완료)
+        robot1_path = os.path.join(current_dir, "rb10_1300e_DDA.urdf")
+        if not os.path.exists(robot1_path):
+            raise Exception(f"로봇 1 URDF 파일을 찾을 수 없습니다: {robot1_path}")
         
-        # URDF 파일의 메시 경로 수정
-        print("URDF 파일의 메시 경로를 절대 경로로 수정 중...")
-        modified_urdf_path = os.path.join(current_dir, "rb10_1300e_modified.urdf")
-        modified_urdf_path = modify_urdf_mesh_paths(robot_path, modified_urdf_path)
-        print(f"수정된 URDF 파일 경로: {modified_urdf_path}")
+        # 로봇 2용 URDF (일반 버전)
+        robot2_path = os.path.join(current_dir, "rb10_1300e_RT.urdf")
+        if not os.path.exists(robot2_path):
+            raise Exception(f"로봇 2 URDF 파일을 찾을 수 없습니다: {robot2_path}")
+                
+        # 로봇 1 로드 (DDA 버전)
+        robot1_orientation = p.getQuaternionFromEuler([0, 0, math.pi])  # 180도 회전
+        robot1_position = [0, 0, 0]  # 원점에 배치
         
-        # 로봇을 거꾸로 배치하기 위한 회전 각도 (180도 회전)
-        robot_orientation = p.getQuaternionFromEuler([0, 0, math.pi])
-        
-        # 로봇의 초기 위치를 좌표계 원점으로 설정
-        robot_position = [0, 0, 0]  # X: 0mm, Y: 0mm, Z: 0mm
-        
-        # 절대 경로로 로봇 로드
         try:
-            robot_id = p.loadURDF(
-                modified_urdf_path,
-                basePosition=robot_position,
-                baseOrientation=robot_orientation,
+            robot1_id = p.loadURDF(
+                robot1_path,
+                basePosition=robot1_position,
+                baseOrientation=robot1_orientation,
                 useFixedBase=True
             )
-            if robot_id < 0:
-                raise Exception("Robot URDF 로드 실패")
-            print("로봇이 성공적으로 로드되었습니다!")
+            if robot1_id < 0:
+                raise Exception("로봇 1 (DDA) URDF 로드 실패")
+            print("로봇 1 (DDA 버전)이 성공적으로 로드되었습니다!")
+            # 로봇 1 좌표축 표시
+            draw_coordinate_axes(robot1_id, scale=0.15)
         except p.error as e:
-            print(f"로봇 로드 중 오류 발생: {e}")
+            print(f"로봇 1 (DDA) 로드 중 오류 발생: {e}")
+            raise
+        
+        # 로봇 2 로드 (일반 버전, 다른 위치에 배치)
+        robot2_orientation = p.getQuaternionFromEuler([0, 0, math.pi])  # 180도 회전
+        robot2_position = [1.0, 0, 0]  # X축으로 1m 이동하여 배치
+        
+        try:
+            robot2_id = p.loadURDF(
+                robot2_path,
+                basePosition=robot2_position,
+                baseOrientation=robot2_orientation,
+                useFixedBase=True
+            )
+            if robot2_id < 0:
+                raise Exception("로봇 2 (일반) URDF 로드 실패")
+            print("로봇 2 (일반 버전)가 성공적으로 로드되었습니다!")
+            # 로봇 2 좌표축 표시
+            draw_coordinate_axes(robot2_id, scale=0.15)
+        except p.error as e:
+            print(f"로봇 2 (일반) 로드 중 오류 발생: {e}")
             raise
 
-        # 로봇의 관절 정보 저장
-        robot_joints = []
-        for i in range(p.getNumJoints(robot_id)):
-            joint_info = p.getJointInfo(robot_id, i)
-            if joint_info[2] == p.JOINT_REVOLUTE:
-                robot_joints.append({
-                    'index': i,
-                    'name': joint_info[1].decode('utf-8'),
-                    'position': 0.0,
-                    'target': 0.0,
-                    'velocity': 0.0
-                })
+        # 로봇들을 데이터 구조에 저장
+        robots[robot1_id] = {
+            'id': robot1_id,
+            'name': 'Robot1',
+            'joints': [],
+            'position': robot1_position,
+            'orientation': robot1_orientation
+        }
+        
+        robots[robot2_id] = {
+            'id': robot2_id,
+            'name': 'Robot2',
+            'joints': [],
+            'position': robot2_position,
+            'orientation': robot2_orientation
+        }
+        
+        # 각 로봇의 관절 정보 저장
+        for robot_id in robots:
+            robot_joints = []
+            for i in range(p.getNumJoints(robot_id)):
+                joint_info = p.getJointInfo(robot_id, i)
+                if joint_info[2] == p.JOINT_REVOLUTE:
+                    robot_joints.append({
+                        'index': i,
+                        'name': joint_info[1].decode('utf-8'),
+                        'position': 0.0,
+                        'target': 0.0,
+                        'velocity': 0.0
+                    })
+            robots[robot_id]['joints'] = robot_joints
+        
+        # 각 로봇의 시뮬레이션 상태 초기화
+        robot_simulation_states[robot1_id] = {
+            'simulation_started': False,
+            'path_index': 0,
+            'collision_detected': False
+        }
+        
+        robot_simulation_states[robot2_id] = {
+            'simulation_started': False,
+            'path_index': 0,
+            'collision_detected': False
+        }
 
-        print("\n시뮬레이션 준비가 완료되었습니다.")
-        print("1. 시작 위치(Start X/Y/Z)를 설정하세요.")        
+        print("\n멀티 로봇 시뮬레이션 준비가 완료되었습니다.")
+        print(f"로드된 로봇: {len(robots)}대")
+        for robot_id in robots:
+            print(f"  - {robots[robot_id]['name']} (ID: {robot_id})")
+        print("1. 각 로봇의 시작 위치와 종료 위치를 설정하세요.")
         print("2. 파이프 위치(Pipe X/Y/Z)를 조절하여 원하는 위치로 이동하세요.")
-        print("3. 'Start Simulation' 버튼을 클릭하여 시뮬레이션을 시작하세요.")
-        print("4. 'Reset Simulation' 버튼을 클릭하여 시뮬레이션을 초기화할 수 있습니다.")
+        print("3. 'Robot1 Start' 또는 'Robot2 Start' 버튼을 클릭하여 각 로봇의 시뮬레이션을 시작하세요.")
+        print("4. 'Reset All' 버튼으로 모든 로봇을 초기화할 수 있습니다.")
         print("5. 시뮬레이션 속도는 'Simulation Speed' 슬라이더로 조절할 수 있습니다.")
         print("6. 충돌이 발생하면 해당 부위가 빨간색으로 표시됩니다.")
-        print("7. 마우스 중간 버튼을 누른 상태에서 마우스를 움직이면 카메라가 회전합니다.")
-        print("8. Ctrl+C를 눌러 종료할 수 있습니다.\n")
+        print("7. 로봇 간 충돌은 주황색으로 표시됩니다.")
+        print("8. 마우스로 카메라를 자유롭게 조작할 수 있습니다.")
+        print("9. Ctrl+C를 눌러 종료할 수 있습니다.")
+        print("10. 로봇 원점 위치/자세를 변경한 후 'Apply Robot Base' 버튼을 눌러 적용하세요.\n")
 
-        path = None
-        simulation_started = False
-        collision_detected = False
+        # 이전 Apply 버튼 상태 저장
+        previous_apply_state = p.readUserDebugParameter(apply_robot_base_button)
+
+        # 로봇 재로드 함수
+        def reload_robots_with_new_base():
+            nonlocal robot1_id, robot2_id, robots
+            
+            # 새로운 로봇 원점 위치 및 자세 읽기
+            new_robot1_pos = [
+                p.readUserDebugParameter(robot1_base_x_text),
+                p.readUserDebugParameter(robot1_base_y_text),
+                p.readUserDebugParameter(robot1_base_z_text)
+            ]
+            new_robot1_rpy = [
+                p.readUserDebugParameter(robot1_base_roll_text),
+                p.readUserDebugParameter(robot1_base_pitch_text),
+                p.readUserDebugParameter(robot1_base_yaw_text)
+            ]
+            new_robot1_orientation = p.getQuaternionFromEuler(new_robot1_rpy)
+            
+            new_robot2_pos = [
+                p.readUserDebugParameter(robot2_base_x_text),
+                p.readUserDebugParameter(robot2_base_y_text),
+                p.readUserDebugParameter(robot2_base_z_text)
+            ]
+            new_robot2_rpy = [
+                p.readUserDebugParameter(robot2_base_roll_text),
+                p.readUserDebugParameter(robot2_base_pitch_text),
+                p.readUserDebugParameter(robot2_base_yaw_text)
+            ]
+            new_robot2_orientation = p.getQuaternionFromEuler(new_robot2_rpy)
+            
+            # 기존 로봇 제거
+            try:
+                p.removeBody(robot1_id)
+                p.removeBody(robot2_id)
+                print("기존 로봇들이 제거되었습니다.")
+            except:
+                print("기존 로봇 제거 중 오류 발생 (무시)")
+            
+            # 새로운 위치와 자세로 로봇 재로드
+            try:
+                robot1_id = p.loadURDF(
+                    robot1_path,
+                    basePosition=new_robot1_pos,
+                    baseOrientation=new_robot1_orientation,
+                    useFixedBase=True
+                )
+                robot2_id = p.loadURDF(
+                    robot2_path,
+                    basePosition=new_robot2_pos,
+                    baseOrientation=new_robot2_orientation,
+                    useFixedBase=True
+                )
+                
+                # 좌표축 표시
+                draw_coordinate_axes(robot1_id, scale=0.15)
+                draw_coordinate_axes(robot2_id, scale=0.15)
+                
+                # 로봇 데이터 업데이트
+                robots[robot1_id] = {
+                    'name': 'Robot1_DDA',
+                    'joints': [],
+                    'position': new_robot1_pos,
+                    'orientation': new_robot1_orientation
+                }
+                robots[robot2_id] = {
+                    'name': 'Robot2_RT', 
+                    'joints': [],
+                    'position': new_robot2_pos,
+                    'orientation': new_robot2_orientation
+                }
+                
+                # 관절 정보 재설정
+                for robot_id in [robot1_id, robot2_id]:
+                    robot_joints = []
+                    for i in range(p.getNumJoints(robot_id)):
+                        joint_info = p.getJointInfo(robot_id, i)
+                        if joint_info[2] == p.JOINT_REVOLUTE:
+                            robot_joints.append({
+                                'index': i,
+                                'name': joint_info[1].decode('utf-8'),
+                                'position': 0.0,
+                                'target': 0.0,
+                                'velocity': 0.0
+                            })
+                    robots[robot_id]['joints'] = robot_joints
+                
+                print("로봇들이 새로운 위치와 자세로 재로드되었습니다!")
+                print(f"Robot1 위치: {new_robot1_pos}, RPY: {new_robot1_rpy}")
+                print(f"Robot2 위치: {new_robot2_pos}, RPY: {new_robot2_rpy}")
+                
+            except Exception as e:
+                print(f"로봇 재로드 중 오류 발생: {e}")
 
         # 시뮬레이션 루프
         while p.isConnected():
             try:
-                # 카메라 리셋 버튼 확인
-                current_reset_camera_state = p.readUserDebugParameter(reset_camera_button)
-                if current_reset_camera_state != prev_reset_camera_state:
-                    prev_reset_camera_state = current_reset_camera_state
-                    p.resetDebugVisualizerCamera(
-                        cameraDistance=camera_distance,
-                        cameraYaw=camera_yaw,
-                        cameraPitch=camera_pitch,
-                        cameraTargetPosition=camera_target
-                    )
-                    print("카메라 위치가 초기화되었습니다.")
-                
-                # 카메라 슬라이더 값 읽기 및 적용
-                current_distance = p.readUserDebugParameter(camera_distance_slider)
-                current_yaw = p.readUserDebugParameter(camera_yaw_slider)
-                current_pitch = p.readUserDebugParameter(camera_pitch_slider)
-                
-                # 카메라 위치 업데이트 (슬라이더 값이 변경된 경우에만)
-                if (current_distance != camera_distance or 
-                    current_yaw != camera_yaw or 
-                    current_pitch != camera_pitch):
-                    
-                    camera_distance = current_distance
-                    camera_yaw = current_yaw
-                    camera_pitch = current_pitch
-                    
-                    p.resetDebugVisualizerCamera(
-                        cameraDistance=camera_distance,
-                        cameraYaw=camera_yaw,
-                        cameraPitch=camera_pitch,
-                        cameraTargetPosition=camera_target
-                    )
-                
-                # 키보드 입력 처리 (스페이스 키로 카메라 초기화)
-                if keyboard.is_pressed(' '):
-                    p.resetDebugVisualizerCamera(
-                        cameraDistance=camera_distance,
-                        cameraYaw=camera_yaw,
-                        cameraPitch=camera_pitch,
-                        cameraTargetPosition=camera_target
-                    )
-                    print("카메라 위치가 초기화되었습니다.")
-                    # 키 중복 인식 방지를 위한 짧은 대기
-                    time.sleep(0.2)
+                # 카메라 컨트롤 코드 제거 - 마우스만 사용
                 
                 # 버튼 상태 확인
-                current_button_state = p.readUserDebugParameter(start_button)
+                current_robot1_button_state = p.readUserDebugParameter(robot1_start_button)
+                current_robot2_button_state = p.readUserDebugParameter(robot2_start_button)
                 current_reset_state = p.readUserDebugParameter(reset_button)
+                current_apply_state = p.readUserDebugParameter(apply_robot_base_button)
+                
+                # Apply Robot Base 버튼이 눌렸는지 확인
+                if current_apply_state != previous_apply_state:
+                    print("Apply Robot Base 버튼이 눌렸습니다. 로봇들을 재로드합니다...")
+                    reload_robots_with_new_base()
+                    previous_apply_state = current_apply_state
                 
                 # 파이프 위치 업데이트
                 pipe_pos = [
@@ -701,147 +1039,278 @@ def main():
                 
                 p.resetBasePositionAndOrientation(pipe_id, pipe_pos, pipe_orientation)
                 
-                # 지속적인 충돌 검사 (디버깅용)
-                debug_contacts = p.getContactPoints(robot_id, pipe_id)
-                if len(debug_contacts) > 0:
-                    print(f"[디버그] 파이프-로봇 접촉점: {len(debug_contacts)}")
+                # 로봇들 간의 지속적인 충돌 검사 (디버깅용)
+                robot_ids = list(robots.keys())
+                for i, robot_id in enumerate(robot_ids):
+                    # 파이프와의 충돌 검사
+                    debug_contacts = p.getContactPoints(robot_id, pipe_id)
+                    if len(debug_contacts) > 0:
+                        print(f"[디버그] 파이프-로봇{i+1} 접촉점: {len(debug_contacts)}")
+                    
+                    # 다른 로봇들과의 충돌 검사
+                    for j, other_robot_id in enumerate(robot_ids):
+                        if i < j:  # 중복 검사 방지
+                            robot_contacts = p.getContactPoints(robot_id, other_robot_id)
+                            if len(robot_contacts) > 0:
+                                print(f"[디버그] 로봇{i+1}-로봇{j+1} 접촉점: {len(robot_contacts)}")
                 
                 # 초기화 버튼이 눌렸을 때
                 if current_reset_state != previous_reset_state:
                     previous_reset_state = current_reset_state
-                    if reset_simulation(robot_id, pipe_id):
-                        print("\n시뮬레이션이 초기화되었습니다.")
+                    if reset_simulation(robots, pipe_id, robot_simulation_states):
+                        print("\n모든 로봇 시뮬레이션이 초기화되었습니다.")
                         print("새로운 시작 위치를 설정하고 파이프 위치를 조절하세요.")
-                        simulation_started = False
-                        path = None
-                        collision_detected = False
-                        # 모든 링크의 색상을 원래대로 복원
-                        for i in range(p.getNumJoints(robot_id)):
-                            p.changeVisualShape(robot_id, i, rgbaColor=[1, 1, 1, 1])
+                        robot_paths.clear()  # 모든 경로 지우기
                         continue
                 
-                # 시작 버튼이 눌렸을 때
-                if current_button_state != previous_button_state:
-                    previous_button_state = current_button_state
+                # 로봇 1 시작 버튼이 눌렸을 때
+                if current_robot1_button_state != previous_robot1_button_state:
+                    previous_robot1_button_state = current_robot1_button_state
+                    robot1_id = list(robots.keys())[0]  # 첫 번째 로봇 ID
                     
-                    if not simulation_started:
-                        # 시작 위치 읽기
+                    if not robot_simulation_states[robot1_id]['simulation_started']:
+                        print("\n로봇 1 경로 생성 중...")
+                        
+                        # 로봇 1 시작 위치 읽기
                         start_pos = [
-                            p.readUserDebugParameter(start_x),
-                            p.readUserDebugParameter(start_y),
-                            p.readUserDebugParameter(start_z)
+                            p.readUserDebugParameter(robot1_start_x),
+                            p.readUserDebugParameter(robot1_start_y),
+                            p.readUserDebugParameter(robot1_start_z)
                         ]
                         
-                        # 시작 자세 읽기 (RPY -> 쿼터니언)
+                        # 로봇 1 시작 자세 읽기
                         start_rpy = [
-                            p.readUserDebugParameter(start_roll),
-                            p.readUserDebugParameter(start_pitch),
-                            p.readUserDebugParameter(start_yaw)
+                            p.readUserDebugParameter(robot1_start_roll),
+                            p.readUserDebugParameter(robot1_start_pitch),
+                            p.readUserDebugParameter(robot1_start_yaw)
                         ]
                         start_orientation = p.getQuaternionFromEuler(start_rpy)
                         
-                        # 종료 위치 읽기
+                        # 로봇 1 종료 위치 읽기
                         end_pos = [
-                            p.readUserDebugParameter(end_x),
-                            p.readUserDebugParameter(end_y),
-                            p.readUserDebugParameter(end_z)
+                            p.readUserDebugParameter(robot1_end_x),
+                            p.readUserDebugParameter(robot1_end_y),
+                            p.readUserDebugParameter(robot1_end_z)
                         ]
                         
-                        # 종료 자세 읽기 (RPY -> 쿼터니언)
+                        # 로봇 1 종료 자세 읽기
                         end_rpy = [
-                            p.readUserDebugParameter(end_roll),
-                            p.readUserDebugParameter(end_pitch),
-                            p.readUserDebugParameter(end_yaw)
+                            p.readUserDebugParameter(robot1_end_roll),
+                            p.readUserDebugParameter(robot1_end_pitch),
+                            p.readUserDebugParameter(robot1_end_yaw)
                         ]
                         end_orientation = p.getQuaternionFromEuler(end_rpy)
                         
-                        # 종료 위치를 시각화
-                        visualize_position_id = p.addUserDebugLine(
-                            end_pos,
-                            [end_pos[0], end_pos[1], end_pos[2] + 0.1],
-                            lineColorRGB=[0, 0, 1],
-                            lineWidth=2.0,
-                            lifeTime=0
-                        )
+                        print(f"로봇 1 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
+                        print(f"로봇 1 종료 위치: {end_pos}, 자세(RPY): {end_rpy}")
                         
-                        print("\n경로 생성 중...")
-                        print(f"시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
-                        print(f"종료 위치: {end_pos}, 자세(RPY): {end_rpy}")
-                        print(f"파이프 위치: {pipe_pos}, 자세(RPY): {pipe_rpy}")
+                        # 역기구학으로 관절 각도 계산
+                        # TCP 링크 인덱스 찾기 (로봇 1)
+                        tcp_link_index = p.getNumJoints(robot1_id) - 1
+                        for i in range(p.getNumJoints(robot1_id)):
+                            joint_info = p.getJointInfo(robot1_id, i)
+                            link_name = joint_info[12].decode('utf-8')  # child link name
+                            if 'tcp' in link_name.lower():
+                                tcp_link_index = i
+                                break
                         
-                        # 시작/종료 위치를 관절 각도로 변환 (역기구학) - 자세 포함
                         start_joints = p.calculateInverseKinematics(
-                            robot_id, 
-                            p.getNumJoints(robot_id)-1, 
+                            robot1_id, 
+                            tcp_link_index, 
                             start_pos,
                             targetOrientation=start_orientation
                         )
                         
                         end_joints = p.calculateInverseKinematics(
-                            robot_id, 
-                            p.getNumJoints(robot_id)-1, 
-                            end_pos,  # 파이프 위치 대신 종료 위치 사용
-                            targetOrientation=end_orientation  # 파이프 방향 대신 종료 방향 사용
+                            robot1_id, 
+                            tcp_link_index, 
+                            end_pos,
+                            targetOrientation=end_orientation
                         )
                         
-                        # RRT*로 경로 생성 (입력은 시작과 종료시 로봇의 조인트공간 위치)
-                        path = rrt_star_plan(robot_id, start_joints, end_joints)
+                        # 다른 로봇들 ID 리스트 준비
+                        other_robot_ids = [rid for rid in robots.keys() if rid != robot1_id]
+                        
+                        # RRT*로 경로 생성 (멀티 로봇 충돌 고려)
+                        path = rrt_star_plan(robot1_id, start_joints, end_joints, pipe_id=pipe_id, other_robots=other_robot_ids)
                         
                         if path is None:
-                            print("경로를 찾을 수 없습니다. 다른 위치를 시도해보세요.")
+                            print("로봇 1 경로를 찾을 수 없습니다. 다른 위치를 시도해보세요.")
                             continue
-                            
-                        print(f"경로가 생성되었습니다. 경로 길이: {len(path)}")
                         
-
-                        # 생성된 경로 시각화
-                        print("End Effector 경로를 시각화합니다...")
-                        visualize_path(robot_id, path)
+                        print(f"로봇 1 경로가 생성되었습니다. 경로 길이: {len(path)}")
                         
-
-                        # 경로를 CSV 파일로 저장
-                        save_joint_trajectory_to_csv(path, "joint_trajectory.csv")
+                        # 경로 시각화 (초록색)
+                        visualize_path(robot1_id, path, color=[0, 1, 0])
                         
-
-                        simulation_started = True
-                        path_index = 0
-                        collision_detected = False
+                        # 경로 저장
+                        robot_paths[robot1_id] = path
+                        save_joint_trajectory_to_csv(path, "robot1_trajectory.csv")
+                        
+                        # 로봇 1 시뮬레이션 상태 업데이트
+                        robot_simulation_states[robot1_id]['simulation_started'] = True
+                        robot_simulation_states[robot1_id]['path_index'] = 0
+                        robot_simulation_states[robot1_id]['collision_detected'] = False
+                
+                # 로봇 2 시작 버튼이 눌렸을 때
+                if current_robot2_button_state != previous_robot2_button_state:
+                    previous_robot2_button_state = current_robot2_button_state
+                    robot2_id = list(robots.keys())[1]  # 두 번째 로봇 ID
+                    
+                    if not robot_simulation_states[robot2_id]['simulation_started']:
+                        print("\n로봇 2 경로 생성 중...")
+                        
+                        # 로봇 2 시작 위치 읽기
+                        start_pos = [
+                            p.readUserDebugParameter(robot2_start_x),
+                            p.readUserDebugParameter(robot2_start_y),
+                            p.readUserDebugParameter(robot2_start_z)
+                        ]
+                        
+                        # 로봇 2 시작 자세 읽기
+                        start_rpy = [
+                            p.readUserDebugParameter(robot2_start_roll),
+                            p.readUserDebugParameter(robot2_start_pitch),
+                            p.readUserDebugParameter(robot2_start_yaw)
+                        ]
+                        start_orientation = p.getQuaternionFromEuler(start_rpy)
+                        
+                        # 로봇 2 종료 위치 읽기
+                        end_pos = [
+                            p.readUserDebugParameter(robot2_end_x),
+                            p.readUserDebugParameter(robot2_end_y),
+                            p.readUserDebugParameter(robot2_end_z)
+                        ]
+                        
+                        # 로봇 2 종료 자세 읽기
+                        end_rpy = [
+                            p.readUserDebugParameter(robot2_end_roll),
+                            p.readUserDebugParameter(robot2_end_pitch),
+                            p.readUserDebugParameter(robot2_end_yaw)
+                        ]
+                        end_orientation = p.getQuaternionFromEuler(end_rpy)
+                        
+                        print(f"로봇 2 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
+                        print(f"로봇 2 종료 위치: {end_pos}, 자세(RPY): {end_rpy}")
+                        
+                        # 역기구학으로 관절 각도 계산
+                        # TCP 링크 인덱스 찾기 (로봇 2)
+                        tcp_link_index = p.getNumJoints(robot2_id) - 1
+                        for i in range(p.getNumJoints(robot2_id)):
+                            joint_info = p.getJointInfo(robot2_id, i)
+                            link_name = joint_info[12].decode('utf-8')  # child link name
+                            if 'tcp' in link_name.lower():
+                                tcp_link_index = i
+                                break
+                        
+                        start_joints = p.calculateInverseKinematics(
+                            robot2_id, 
+                            tcp_link_index, 
+                            start_pos,
+                            targetOrientation=start_orientation
+                        )
+                        
+                        end_joints = p.calculateInverseKinematics(
+                            robot2_id, 
+                            tcp_link_index, 
+                            end_pos,
+                            targetOrientation=end_orientation
+                        )
+                        
+                        # 다른 로봇들 ID 리스트 준비
+                        other_robot_ids = [rid for rid in robots.keys() if rid != robot2_id]
+                        
+                        # RRT*로 경로 생성 (멀티 로봇 충돌 고려)
+                        path = rrt_star_plan(robot2_id, start_joints, end_joints, pipe_id=pipe_id, other_robots=other_robot_ids)
+                        
+                        if path is None:
+                            print("로봇 2 경로를 찾을 수 없습니다. 다른 위치를 시도해보세요.")
+                            continue
+                        
+                        print(f"로봇 2 경로가 생성되었습니다. 경로 길이: {len(path)}")
+                        
+                        # 경로 시각화 (파란색)
+                        visualize_path(robot2_id, path, color=[0, 0, 1])
+                        
+                        # 경로 저장
+                        robot_paths[robot2_id] = path
+                        save_joint_trajectory_to_csv(path, "robot2_trajectory.csv")
+                        
+                        # 로봇 2 시뮬레이션 상태 업데이트
+                        robot_simulation_states[robot2_id]['simulation_started'] = True
+                        robot_simulation_states[robot2_id]['path_index'] = 0
+                        robot_simulation_states[robot2_id]['collision_detected'] = False
                 
 
-                # 최종 결과 가시화   
-                if simulation_started and path is not None and path_index < len(path) and not collision_detected:
-                    # 시뮬레이션 속도 읽기
-                    speed = p.readUserDebugParameter(speed_slider)
+                # 모든 로봇의 시뮬레이션 실행   
+                for robot_id in robots:
+                    robot_state = robot_simulation_states[robot_id]
                     
-                    # 현재 경로의 관절 위치로 이동
-                    current_config = path[path_index]
-                    
-                    # 로봇 관절 제어
-                    for i, joint in enumerate(robot_joints):
-                        p.setJointMotorControl2(
-                            bodyIndex=robot_id,
-                            jointIndex=joint['index'],
-                            controlMode=p.POSITION_CONTROL,
-                            targetPosition=current_config[i],
-                            force=1000,
-                            positionGain=1.0,
-                            velocityGain=0.5,
-                            maxVelocity=0.5 * speed
-                        )
-                    
-                    # 충돌 검사 (파이프 충돌 확인 포함)
-                    has_collision, collision_links, pipe_collision = check_collision(robot_id, current_config, pipe_id)
-                    if has_collision:
-                        print("\n충돌이 감지되었습니다!")
-                        print(f"충돌한 링크: {collision_links}")
-                        if pipe_collision:
-                            print("파이프와 충돌했습니다!")
-                        highlight_collision_links(robot_id, collision_links, pipe_id, pipe_collision)
-                        collision_detected = True
-                    else:
-                        # 충돌이 없으면 파이프 색상 원래대로
-                        p.changeVisualShape(pipe_id, -1, rgbaColor=[1, 1, 1, 1])
-                        path_index += 1
+                    if (robot_state['simulation_started'] and 
+                        robot_id in robot_paths and 
+                        robot_state['path_index'] < len(robot_paths[robot_id]) and 
+                        not robot_state['collision_detected']):
+                        
+                        # 시뮬레이션 속도 읽기
+                        speed = p.readUserDebugParameter(speed_slider)
+                        
+                        # 현재 경로의 관절 위치로 이동
+                        current_config = robot_paths[robot_id][robot_state['path_index']]
+                        
+                        # 로봇 관절 제어
+                        for i, joint in enumerate(robots[robot_id]['joints']):
+                            p.setJointMotorControl2(
+                                bodyIndex=robot_id,
+                                jointIndex=joint['index'],
+                                controlMode=p.POSITION_CONTROL,
+                                targetPosition=current_config[i],
+                                force=1000,
+                                positionGain=1.0,
+                                velocityGain=0.5,
+                                maxVelocity=0.5 * speed
+                            )
+                        
+                        # 다른 로봇들 ID 리스트 준비
+                        other_robot_ids = [rid for rid in robots.keys() if rid != robot_id]
+                        
+                        # 충돌 검사 (파이프 및 다른 로봇과의 충돌 확인 포함)
+                        collision_result = check_collision(robot_id, current_config, pipe_id, other_robot_ids)
+                        has_collision, collision_links, pipe_collision, robot_collision = collision_result
+                        
+                        if has_collision:
+                            robot_name = robots[robot_id]['name']
+                            print(f"\n{robot_name} 충돌이 감지되었습니다!")
+                            print(f"충돌한 링크: {collision_links}")
+                            if pipe_collision:
+                                print(f"{robot_name}이 파이프와 충돌했습니다!")
+                            if robot_collision:
+                                print(f"{robot_name}이 다른 로봇과 충뎼했습니다!")
+                            
+                            highlight_collision_links(robot_id, collision_links, pipe_id, pipe_collision, robot_collision)
+                            robot_state['collision_detected'] = True
+                        else:
+                            # 충뎼이 없으면 다음 경로 지점으로 이동
+                            robot_state['path_index'] += 1
+                            
+                            # 마지막 경로 지점에 도달한 경우
+                            if robot_state['path_index'] >= len(robot_paths[robot_id]):
+                                robot_name = robots[robot_id]['name']
+                                print(f"\n{robot_name} 경로 실행이 완료되었습니다!")
+                
+                # 파이프 색상 업데이트 (어떤 로봇이라도 충돌 시 빨간색)
+                any_pipe_collision = False
+                for robot_id in robots:
+                    if robot_id in robot_paths and robot_simulation_states[robot_id]['simulation_started']:
+                        other_robot_ids = [rid for rid in robots.keys() if rid != robot_id]
+                        if robot_simulation_states[robot_id]['path_index'] < len(robot_paths[robot_id]):
+                            current_config = robot_paths[robot_id][robot_simulation_states[robot_id]['path_index']]
+                            collision_result = check_collision(robot_id, current_config, pipe_id, other_robot_ids)
+                            if len(collision_result) >= 3 and collision_result[2]:  # pipe_collision
+                                any_pipe_collision = True
+                                break
+                
+                if not any_pipe_collision:
+                    p.changeVisualShape(pipe_id, -1, rgbaColor=[1, 1, 1, 1])  # 파이프를 흰색으로
                 
                 # 시뮬레이션 스텝 진행
                 p.stepSimulation()                
