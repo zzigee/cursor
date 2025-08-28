@@ -323,6 +323,54 @@ def steer(q_near, q_rand, step_size):
 def get_cost(q1, q2):
     return distance_between_configurations(q1, q2)
 
+def get_click_position():
+    """마우스 클릭으로 3D 공간의 위치를 얻는 함수"""
+    # 마우스 클릭 이벤트 처리
+    mouse_events = p.getMouseEvents()
+    for event in mouse_events:
+        if event[0] == p.MOUSE_BUTTON_LEFT and event[3] == p.MOUSE_BUTTON_DOWN:
+            # 마우스 클릭 위치를 3D 공간으로 변환
+            mouse_x, mouse_y = event[1], event[2]
+            
+            # 현재 카메라 정보 가져오기
+            camera_info = p.getDebugVisualizerCamera()
+            view_matrix = camera_info[2]  # view matrix
+            projection_matrix = camera_info[3]  # projection matrix
+            
+            # 마우스 위치를 3D 공간으로 변환 (여러 깊이에서 시도)
+            for depth in [0.1, 0.3, 0.5, 0.7, 0.9]:
+                try:
+                    world_pos = p.unprojectFromViewAndProjectionMatrices(
+                        view_matrix, projection_matrix, mouse_x, mouse_y, depth
+                    )
+                    # 유효한 위치인지 확인 (NaN이나 무한대 값이 아닌지)
+                    if (all(not math.isnan(val) and not math.isinf(val) for val in world_pos) and
+                        all(abs(val) < 1000 for val in world_pos)):  # 합리적인 범위 내
+                        return world_pos
+                except:
+                    continue
+            
+            # 변환 실패 시 기본 위치 반환
+            print("마우스 클릭 위치 변환에 실패했습니다. 기본 위치를 사용합니다.")
+            return [0, 0, 0]
+    return None
+
+def draw_click_point(position, color=[1, 0, 0], size=0.1):
+    """클릭한 위치에 점을 표시하는 함수"""
+    # 구체를 생성하여 클릭 위치 표시
+    sphere_id = p.createVisualShape(
+        p.GEOM_SPHERE,
+        radius=size,
+        rgbaColor=color + [1.0]  # 알파값 추가
+    )
+    body_id = p.createMultiBody(
+        baseMass=0,
+        baseCollisionShapeIndex=-1,
+        baseVisualShapeIndex=sphere_id,
+        basePosition=position
+    )
+    return body_id
+
 def find_near_nodes(tree, q_new, radius):
     near_nodes = []
     for node in tree:
@@ -494,45 +542,91 @@ def draw_link_coordinate_axes(robot_id, scale=0.08):
         y_end = [position[0] + y_axis[0], position[1] + y_axis[1], position[2] + y_axis[2]]
         z_end = [position[0] + z_axis[0], position[1] + z_axis[1], position[2] + z_axis[2]]
         
-        # 링크별로 다른 색상 강도 사용 (베이스 객체보다 연한 색)
-        alpha = 0.7  # 투명도
-        
-        # X축 화살표 (연한 빨간색)
-        p.addUserDebugLine(
-            position, x_end, 
-            lineColorRGB=[1, 0.3, 0.3], 
-            lineWidth=2.0, 
-            lifeTime=0
-        )
-        
-        # Y축 화살표 (연한 초록색)  
-        p.addUserDebugLine(
-            position, y_end, 
-            lineColorRGB=[0.3, 1, 0.3], 
-            lineWidth=2.0, 
-            lifeTime=0
-        )
-        
-        # Z축 화살표 (연한 파란색)
-        p.addUserDebugLine(
-            position, z_end, 
-            lineColorRGB=[0.3, 0.3, 1], 
-            lineWidth=2.0, 
-            lifeTime=0
-        )
-        
-        # TCP 링크이면 특별히 표시
+        # TCP 링크이면 특별히 표시 (더 큰 스케일과 선 굵기)
         if 'tcp' in link_name.lower():
-            # TCP 링크는 더 큰 텍스트로 표시
-            p.addUserDebugText(
-                f"TCP", 
-                [position[0], position[1], position[2] + 0.05], 
-                textColorRGB=[1, 1, 0], 
-                textSize=1.2, 
+            # TCP 링크는 더 큰 스케일과 선 굵기 사용
+            tcp_scale = scale * 1.5  # 1.5배 더 큰 스케일
+            tcp_x_axis = [rotation_matrix[0] * tcp_scale, rotation_matrix[3] * tcp_scale, rotation_matrix[6] * tcp_scale]
+            tcp_y_axis = [rotation_matrix[1] * tcp_scale, rotation_matrix[4] * tcp_scale, rotation_matrix[7] * tcp_scale]
+            tcp_z_axis = [rotation_matrix[2] * tcp_scale, rotation_matrix[5] * tcp_scale, rotation_matrix[8] * tcp_scale]
+            
+            tcp_x_end = [position[0] + tcp_x_axis[0], position[1] + tcp_x_axis[1], position[2] + tcp_x_axis[2]]
+            tcp_y_end = [position[0] + tcp_y_axis[0], position[1] + tcp_y_axis[1], position[2] + tcp_y_axis[2]]
+            tcp_z_end = [position[0] + tcp_z_axis[0], position[1] + tcp_z_axis[1], position[2] + tcp_z_axis[2]]
+            
+            # TCP 링크 X축 화살표 (진한 빨간색, 더 굵은 선)
+            p.addUserDebugLine(
+                position, tcp_x_end, 
+                lineColorRGB=[1, 0, 0], 
+                lineWidth=4.0, 
                 lifeTime=0
             )
+            
+            # TCP 링크 Y축 화살표 (진한 초록색, 더 굵은 선)
+            p.addUserDebugLine(
+                position, tcp_y_end, 
+                lineColorRGB=[0, 1, 0], 
+                lineWidth=4.0, 
+                lifeTime=0
+            )
+            
+            # TCP 링크 Z축 화살표 (진한 파란색, 더 굵은 선)
+            p.addUserDebugLine(
+                position, tcp_z_end, 
+                lineColorRGB=[0, 0, 1], 
+                lineWidth=4.0, 
+                lifeTime=0
+            )
+            
+            # TCP 링크 라벨 (노란색, 더 큰 텍스트)
+            p.addUserDebugText(
+                f"TCP", 
+                [position[0], position[1], position[2] + 0.08], 
+                textColorRGB=[1, 1, 0], 
+                textSize=1.5, 
+                lifeTime=0
+            )
+            
+            # TCP 링크에 작은 구체 마커 추가 (노란색)
+            sphere_id = p.createVisualShape(
+                p.GEOM_SPHERE,
+                radius=0.02,
+                rgbaColor=[1, 1, 0, 0.8]  # 노란색, 약간 투명
+            )
+            p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,
+                baseVisualShapeIndex=sphere_id,
+                basePosition=position
+            )
+            
         else:
-            # 일반 링크는 작은 텍스트로 링크 이름 표시
+            # 일반 링크는 연한 색상과 얇은 선 사용
+            # X축 화살표 (연한 빨간색)
+            p.addUserDebugLine(
+                position, x_end, 
+                lineColorRGB=[1, 0.3, 0.3], 
+                lineWidth=2.0, 
+                lifeTime=0
+            )
+            
+            # Y축 화살표 (연한 초록색)  
+            p.addUserDebugLine(
+                position, y_end, 
+                lineColorRGB=[0.3, 1, 0.3], 
+                lineWidth=2.0, 
+                lifeTime=0
+            )
+            
+            # Z축 화살표 (연한 파란색)
+            p.addUserDebugLine(
+                position, z_end, 
+                lineColorRGB=[0.3, 0.3, 1], 
+                lineWidth=2.0, 
+                lifeTime=0
+            )
+            
+            # 일반 링크 라벨 (회색, 작은 텍스트)
             p.addUserDebugText(
                 f"L{link_index}", 
                 [position[0], position[1], position[2] + 0.03], 
@@ -545,6 +639,29 @@ def reset_simulation(robots, pipe_id, robot_simulation_states):
     """모든 로봇의 시뮬레이션을 초기 상태로 리셋"""
     # 이전에 그려진 경로 제거
     p.removeAllUserDebugItems()
+    
+    # 클릭 선택된 마커들 제거 (전역 변수 접근을 위해 nonlocal 선언 필요)
+    global robot1_start_marker, robot1_end_marker, robot2_start_marker, robot2_end_marker
+    global robot1_start_pos, robot1_end_pos, robot2_start_pos, robot2_end_pos
+    
+    if robot1_start_marker is not None:
+        p.removeBody(robot1_start_marker)
+        robot1_start_marker = None
+    if robot1_end_marker is not None:
+        p.removeBody(robot1_end_marker)
+        robot1_end_marker = None
+    if robot2_start_marker is not None:
+        p.removeBody(robot2_start_marker)
+        robot2_start_marker = None
+    if robot2_end_marker is not None:
+        p.removeBody(robot2_end_marker)
+        robot2_end_marker = None
+    
+    # 클릭 선택된 위치 초기화
+    robot1_start_pos = None
+    robot1_end_pos = None
+    robot2_start_pos = None
+    robot2_end_pos = None
     
     # 모든 로봇의 관절을 초기 위치로 리셋
     for robot_id in robots:
@@ -574,6 +691,7 @@ def reset_simulation(robots, pipe_id, robot_simulation_states):
         draw_coordinate_axes(pipe_id, scale=0.2)  # 파이프
     for robot_id in robots:
         draw_coordinate_axes(robot_id, scale=0.15)  # 각 로봇
+        draw_link_coordinate_axes(robot_id, scale=0.08)  # 각 로봇의 링크 좌표축
     
     return True
 
@@ -762,6 +880,12 @@ def main():
         # Apply 버튼 추가
         apply_robot_base_button = p.addUserDebugParameter("Apply Robot Base", 0, 1, 0)
         
+        # 클릭 선택 모드 버튼들
+        robot1_start_select_button = p.addUserDebugParameter("Robot1 Start Point Select", 0, 1, 0)
+        robot1_end_select_button = p.addUserDebugParameter("Robot1 End Point Select", 0, 1, 0)
+        robot2_start_select_button = p.addUserDebugParameter("Robot2 Start Point Select", 0, 1, 0)
+        robot2_end_select_button = p.addUserDebugParameter("Robot2 End Point Select", 0, 1, 0)
+        
         # 로봇별 시작 버튼
         robot1_start_button = p.addUserDebugParameter("Robot1 Start", 0, 1, 0)
         robot2_start_button = p.addUserDebugParameter("Robot2 Start", 0, 1, 0)
@@ -769,10 +893,26 @@ def main():
         # 전체 초기화 버튼
         reset_button = p.addUserDebugParameter("Reset All", 0, 1, 0)
         
+        # 클릭 선택된 위치 저장 변수들
+        robot1_start_pos = None
+        robot1_end_pos = None
+        robot2_start_pos = None
+        robot2_end_pos = None
+        
+        # 클릭 선택된 위치를 표시하는 시각적 객체들
+        robot1_start_marker = None
+        robot1_end_marker = None
+        robot2_start_marker = None
+        robot2_end_marker = None
+        
         # 이전 버튼 상태 저장
         previous_robot1_button_state = p.readUserDebugParameter(robot1_start_button)
         previous_robot2_button_state = p.readUserDebugParameter(robot2_start_button)
         previous_reset_state = p.readUserDebugParameter(reset_button)
+        previous_robot1_start_select_state = p.readUserDebugParameter(robot1_start_select_button)
+        previous_robot1_end_select_state = p.readUserDebugParameter(robot1_end_select_button)
+        previous_robot2_start_select_state = p.readUserDebugParameter(robot2_start_select_button)
+        previous_robot2_end_select_state = p.readUserDebugParameter(robot2_end_select_button)
 
         # 현재 디렉토리 가져오기
         current_dir = get_data_path()
@@ -896,10 +1036,16 @@ def main():
         print(f"로드된 로봇: {len(robots)}대")
         for robot_id in robots:
             print(f"  - {robots[robot_id]['name']} (ID: {robot_id})")
-        print("1. 각 로봇의 시작 위치와 종료 위치를 설정하세요.")
+        print("=== 멀티 로봇 RRT* 경로 계획 시스템 ===")
+        print("1. 클릭으로 시작/종료점 선택:")
+        print("   - 'Robot1 Start Point Select' 버튼을 누르고 3D 공간에서 시작점 클릭")
+        print("   - 'Robot1 End Point Select' 버튼을 누르고 3D 공간에서 종료점 클릭")
+        print("   - 'Robot2 Start Point Select' 버튼을 누르고 3D 공간에서 시작점 클릭")
+        print("   - 'Robot2 End Point Select' 버튼을 누르고 3D 공간에서 종료점 클릭")
         print("2. 파이프 위치(Pipe X/Y/Z)를 조절하여 원하는 위치로 이동하세요.")
-        print("3. 'Robot1 Start' 또는 'Robot2 Start' 버튼을 클릭하여 각 로봇의 시뮬레이션을 시작하세요.")
-        print("4. 'Reset All' 버튼으로 모든 로봇을 초기화할 수 있습니다.")
+        print("3. 'Robot1 Start' 또는 'Robot2 Start' 버튼을 클릭하여 각 로봇의 RRT* 알고리즘을 시작하세요.")
+        print("4. 'Reset All' 버튼으로 모든 로봇과 선택된 점들을 초기화할 수 있습니다.")
+        print("5. 'Apply Robot Base' 버튼으로 로봇 베이스 위치를 변경할 수 있습니다.")
 
         print("6. 충돌이 발생하면 해당 부위가 빨간색으로 표시됩니다.")
         print("7. 로봇 간 충돌은 주황색으로 표시됩니다.")
@@ -971,6 +1117,10 @@ def main():
                 # 좌표축 표시
                 draw_coordinate_axes(robot1_id, scale=0.15)
                 draw_coordinate_axes(robot2_id, scale=0.15)
+                
+                # 링크 좌표축 표시
+                draw_link_coordinate_axes(robot1_id, scale=0.08)
+                draw_link_coordinate_axes(robot2_id, scale=0.08)
                 
                 # 새로운 로봇 데이터로 딕셔너리 업데이트
                 robots[robot1_id] = {
@@ -1050,6 +1200,12 @@ def main():
                 current_reset_state = p.readUserDebugParameter(reset_button)
                 current_apply_state = p.readUserDebugParameter(apply_robot_base_button)
                 
+                # 클릭 선택 버튼 상태 확인
+                current_robot1_start_select_state = p.readUserDebugParameter(robot1_start_select_button)
+                current_robot1_end_select_state = p.readUserDebugParameter(robot1_end_select_button)
+                current_robot2_start_select_state = p.readUserDebugParameter(robot2_start_select_button)
+                current_robot2_end_select_state = p.readUserDebugParameter(robot2_end_select_button)
+                
                 # Apply Robot Base 버튼이 눌렸는지 확인
                 if current_apply_state != previous_apply_state:
                     print("Apply Robot Base 버튼이 눌렸습니다. 로봇들을 재로드합니다...")
@@ -1077,6 +1233,88 @@ def main():
                         print("GUI 파라미터를 확인하세요.")
                     
                     previous_apply_state = current_apply_state
+                
+                # 클릭 선택 기능 처리
+                # Robot1 시작점 선택
+                if current_robot1_start_select_state != previous_robot1_start_select_state:
+                    previous_robot1_start_select_state = current_robot1_start_select_state
+                    print("Robot1 시작점 선택 모드입니다. 3D 공간에서 원하는 위치를 클릭하세요.")
+                    print("클릭 후 'Robot1 Start' 버튼을 눌러 RRT 알고리즘을 시작하세요.")
+                
+                # Robot1 종료점 선택
+                if current_robot1_end_select_state != previous_robot1_end_select_state:
+                    previous_robot1_end_select_state = current_robot1_end_select_state
+                    print("Robot1 종료점 선택 모드입니다. 3D 공간에서 원하는 위치를 클릭하세요.")
+                    print("클릭 후 'Robot1 Start' 버튼을 눌러 RRT 알고리즘을 시작하세요.")
+                
+                # Robot2 시작점 선택
+                if current_robot2_start_select_state != previous_robot2_start_select_state:
+                    previous_robot2_start_select_state = current_robot2_start_select_state
+                    print("Robot2 시작점 선택 모드입니다. 3D 공간에서 원하는 위치를 클릭하세요.")
+                    print("클릭 후 'Robot2 Start' 버튼을 눌러 RRT 알고리즘을 시작하세요.")
+                
+                # Robot2 종료점 선택
+                if current_robot2_end_select_state != previous_robot2_end_select_state:
+                    previous_robot2_end_select_state = current_robot2_end_select_state
+                    print("Robot2 종료점 선택 모드입니다. 3D 공간에서 원하는 위치를 클릭하세요.")
+                    print("클릭 후 'Robot2 Start' 버튼을 눌러 RRT 알고리즘을 시작하세요.")
+                
+                # 마우스 클릭으로 위치 선택
+                if current_robot1_start_select_state == 1:
+                    click_pos = get_click_position()
+                    if click_pos is not None:
+                        # 기존 마커 제거
+                        if robot1_start_marker is not None:
+                            p.removeBody(robot1_start_marker)
+                        # 새로운 마커 생성 (빨간색)
+                        robot1_start_marker = draw_click_point(click_pos, color=[1, 0, 0], size=0.1)
+                        robot1_start_pos = click_pos
+                        print(f"Robot1 시작점이 선택되었습니다: {click_pos}")
+                        # 버튼 상태 리셋
+                        p.resetDebugVisualizerCamera()
+                        p.resetUserDebugParameter(robot1_start_select_button, 0)
+                
+                if current_robot1_end_select_state == 1:
+                    click_pos = get_click_position()
+                    if click_pos is not None:
+                        # 기존 마커 제거
+                        if robot1_end_marker is not None:
+                            p.removeBody(robot1_end_marker)
+                        # 새로운 마커 생성 (파란색)
+                        robot1_end_marker = draw_click_point(click_pos, color=[0, 0, 1], size=0.1)
+                        robot1_end_pos = click_pos
+                        print(f"Robot1 종료점이 선택되었습니다: {click_pos}")
+                        # 버튼 상태 리셋
+                        p.resetDebugVisualizerCamera()
+                        p.resetUserDebugParameter(robot1_end_select_button, 0)
+                
+                if current_robot2_start_select_state == 1:
+                    click_pos = get_click_position()
+                    if click_pos is not None:
+                        # 기존 마커 제거
+                        if robot2_start_marker is not None:
+                            p.removeBody(robot2_start_marker)
+                        # 새로운 마커 생성 (주황색)
+                        robot2_start_marker = draw_click_point(click_pos, color=[1, 0.5, 0], size=0.1)
+                        robot2_start_pos = click_pos
+                        print(f"Robot2 시작점이 선택되었습니다: {click_pos}")
+                        # 버튼 상태 리셋
+                        p.resetDebugVisualizerCamera()
+                        p.resetUserDebugParameter(robot2_start_select_button, 0)
+                
+                if current_robot2_end_select_state == 1:
+                    click_pos = get_click_position()
+                    if click_pos is not None:
+                        # 기존 마커 제거
+                        if robot2_end_marker is not None:
+                            p.removeBody(robot2_end_marker)
+                        # 새로운 마커 생성 (보라색)
+                        robot2_end_marker = draw_click_point(click_pos, color=[0.5, 0, 0.5], size=0.1)
+                        robot2_end_pos = click_pos
+                        print(f"Robot2 종료점이 선택되었습니다: {click_pos}")
+                        # 버튼 상태 리셋
+                        p.resetDebugVisualizerCamera()
+                        p.resetUserDebugParameter(robot2_end_select_button, 0)
                 
                 # 파이프 위치 업데이트 (고정값 사용)
                 pipe_pos = [pipe_x_val, pipe_y_val, pipe_z_val]
@@ -1119,22 +1357,32 @@ def main():
                     if not robot_simulation_states[robot1_id]['simulation_started']:
                         print("\n로봇 1 경로 생성 중...")
                         
-                        # 로봇 1 시작 위치 (고정값 사용)
-                        start_pos = [robot1_start_x_val, robot1_start_y_val, robot1_start_z_val]
+                        # 클릭 선택된 위치가 있으면 사용, 없으면 기본값 사용
+                        if robot1_start_pos is not None:
+                            start_pos = robot1_start_pos
+                            print(f"로봇 1 시작 위치 (클릭 선택): {start_pos}")
+                        else:
+                            start_pos = [robot1_start_x_val, robot1_start_y_val, robot1_start_z_val]
+                            print(f"로봇 1 시작 위치 (기본값): {start_pos}")
                         
-                        # 로봇 1 시작 자세 (고정값 사용)
+                        # 로봇 1 시작 자세 (기본값 사용)
                         start_rpy = [robot1_start_roll_val, robot1_start_pitch_val, robot1_start_yaw_val]
                         start_orientation = p.getQuaternionFromEuler(start_rpy)
                         
-                        # 로봇 1 종료 위치 (고정값 사용)
-                        end_pos = [robot1_end_x_val, robot1_end_y_val, robot1_end_z_val]
+                        # 클릭 선택된 위치가 있으면 사용, 없으면 기본값 사용
+                        if robot1_end_pos is not None:
+                            end_pos = robot1_end_pos
+                            print(f"로봇 1 종료 위치 (클릭 선택): {end_pos}")
+                        else:
+                            end_pos = [robot1_end_x_val, robot1_end_y_val, robot1_end_z_val]
+                            print(f"로봇 1 종료 위치 (기본값): {end_pos}")
                         
-                        # 로봇 1 종료 자세 (고정값 사용)
+                        # 로봇 1 종료 자세 (기본값 사용)
                         end_rpy = [robot1_end_roll_val, robot1_end_pitch_val, robot1_end_yaw_val]
                         end_orientation = p.getQuaternionFromEuler(end_rpy)
                         
-                        print(f"로봇 1 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
-                        print(f"로봇 1 종료 위치: {end_pos}, 자세(RPY): {end_rpy}")
+                        print(f"로봇 1 시작 자세(RPY): {start_rpy}")
+                        print(f"로봇 1 종료 자세(RPY): {end_rpy}")
                         
                         # 역기구학으로 관절 각도 계산
                         # TCP 링크 인덱스 찾기 (로봇 1)
@@ -1192,22 +1440,32 @@ def main():
                     if not robot_simulation_states[robot2_id]['simulation_started']:
                         print("\n로봇 2 경로 생성 중...")
                         
-                        # 로봇 2 시작 위치 (고정값 사용)
-                        start_pos = [robot2_start_x_val, robot2_start_y_val, robot2_start_z_val]
+                        # 클릭 선택된 위치가 있으면 사용, 없으면 기본값 사용
+                        if robot2_start_pos is not None:
+                            start_pos = robot2_start_pos
+                            print(f"로봇 2 시작 위치 (클릭 선택): {start_pos}")
+                        else:
+                            start_pos = [robot2_start_x_val, robot2_start_y_val, robot2_start_z_val]
+                            print(f"로봇 2 시작 위치 (기본값): {start_pos}")
                         
-                        # 로봇 2 시작 자세 (고정값 사용)
+                        # 로봇 2 시작 자세 (기본값 사용)
                         start_rpy = [robot2_start_roll_val, robot2_start_pitch_val, robot2_start_yaw_val]
                         start_orientation = p.getQuaternionFromEuler(start_rpy)
                         
-                        # 로봇 2 종료 위치 (고정값 사용)
-                        end_pos = [robot2_end_x_val, robot2_end_y_val, robot2_end_z_val]
+                        # 클릭 선택된 위치가 있으면 사용, 없으면 기본값 사용
+                        if robot2_end_pos is not None:
+                            end_pos = robot2_end_pos
+                            print(f"로봇 2 종료 위치 (클릭 선택): {end_pos}")
+                        else:
+                            end_pos = [robot2_end_x_val, robot2_end_y_val, robot2_end_z_val]
+                            print(f"로봇 2 종료 위치 (기본값): {end_pos}")
                         
-                        # 로봇 2 종료 자세 (고정값 사용)
+                        # 로봇 2 종료 자세 (기본값 사용)
                         end_rpy = [robot2_end_roll_val, robot2_end_pitch_val, robot2_end_yaw_val]
                         end_orientation = p.getQuaternionFromEuler(end_rpy)
                         
-                        print(f"로봇 2 시작 위치: {start_pos}, 자세(RPY): {start_rpy}")
-                        print(f"로봇 2 종료 위치: {end_pos}, 자세(RPY): {end_rpy}")
+                        print(f"로봇 2 시작 자세(RPY): {start_rpy}")
+                        print(f"로봇 2 종료 자세(RPY): {end_rpy}")
                         
                         # 역기구학으로 관절 각도 계산
                         # TCP 링크 인덱스 찾기 (로봇 2)
@@ -1324,6 +1582,10 @@ def main():
                 
                 if not any_pipe_collision:
                     p.changeVisualShape(pipe_id, -1, rgbaColor=[1, 1, 1, 1])  # 파이프를 흰색으로
+                
+                # 모든 로봇의 링크 좌표축 표시 (엔드이펙터 포함)
+                for robot_id in robots:
+                    draw_link_coordinate_axes(robot_id, scale=0.08)
                 
                 # 시뮬레이션 스텝 진행
                 p.stepSimulation()                
